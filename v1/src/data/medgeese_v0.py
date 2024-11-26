@@ -1,26 +1,31 @@
-"""Dataset classes and utilities."""
+"""
+Dataset classes and utilities.
+"""
 
-from dataclasses import dataclass
+from glob import glob
+import json
+import os
 import os.path as osp
 
+import data.medgeese_v0_utils as utils
+import numpy as np
 import pandas as pd
+from PIL import Image
 from pytorch_lightning import LightningDataModule
+from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
-from tqdm import tqdm
-import json
-import numpy as np
-import os
-from PIL import Image
-from glob import glob
-import data.medgeese_v0_utils as utils
-from sklearn.model_selection import train_test_split
 from torchvision.transforms import v2
 import torchvision.tv_tensors as tv
+from tqdm import tqdm
 from transformers import AutoImageProcessor
 
 tqdm.pandas()
+
+# TODO(liamhebert): Throughout this code, we only tokenize the images in the
+# "get_item" method and we do not tokenize the text at all. We should instead
+# tokenize ahead of time.
 
 
 class MedGeeseDataModule(LightningDataModule):
@@ -81,7 +86,9 @@ class MedGeeseDataModule(LightningDataModule):
         memory are not replicated across gpus. This is useful for downloading.
         """
         # TODO(liamhebert): Implement data preparation logic
-        if self.hparams.force_remake is False and osp.exists(self.tensor_dir):
+        if self.hparams.force_remake is False and osp.exists(
+            self.hparams.tensor_dir
+        ):
             return
 
         # get umls master dict:
@@ -136,17 +143,14 @@ class MedGeeseDataModule(LightningDataModule):
                     + str(row["index"])
                     + "-0.pt"
                 )
-                and self.force_remake == False
+                and not self.force_remake
             ):
                 return
 
             image_path = self.hparams.image_dir + "/" + str(row["image"])
             mask_path = self.hparams.image_dir + "/" + str(row["mask"])
 
-            if (
-                os.path.exists(image_path) == False
-                or os.path.exists(mask_path) == False
-            ):
+            if not (os.path.exists(image_path) and os.path.exists(mask_path)):
                 print("MISSING FILE: ", image_path, mask_path)
                 return
 
@@ -174,7 +178,8 @@ class MedGeeseDataModule(LightningDataModule):
             masks = []
             umls_labels = []
             if is_breast:
-                # we already have the tumor seg mask so just need breast + background
+                # we already have the tumor seg mask so just need breast +
+                # background
                 if len(img.getbands()) == 1:
                     img = img.convert("RGB")
                     mask = mask.convert("RGB")
@@ -240,7 +245,10 @@ class MedGeeseDataModule(LightningDataModule):
 
                 torch.save(
                     (img, m, y, row["organ"]),
-                    f"{self.hparams.tensor_dir}/processed_tensors/{index}-{str(i)}.pt",
+                    (
+                        f"{self.hparams.tensor_dir}/processed_tensors/"
+                        f"{index}-{str(i)}.pt"
+                    ),
                 )
 
         print("pre-tokenizing data....")
@@ -281,9 +289,8 @@ class MedGeeseDataModule(LightningDataModule):
                 self.hparams.test_batch_size // self.trainer.world_size
             )
 
-        examples = list(
-            glob(self.hparams.tensor_dir + "/processed_tensors/*.pt")  # type: ignore
-        )
+        tensor_dir = self.hparams.tensor_dir  # type: ignore
+        examples = list(glob(tensor_dir + "/processed_tensors/*.pt"))
         train, val, test = self.hparams.train_val_test_split  # type: ignore
         train_set, val_test_set = train_test_split(
             examples, train_size=train, test_size=val + test
@@ -297,25 +304,30 @@ class MedGeeseDataModule(LightningDataModule):
         if stage == "fit" and self._train_dataset is None:
             # make training dataset
             self._train_dataset = MedGeeseDataset(
-                items=train_set, model_path=self.hparams.image_model_path  # type: ignore
+                items=train_set,
+                model_path=self.hparams.image_model_path,  # type: ignore
             )
         elif stage == "validate" and self._val_dataset is None:
             # make validation dataset
             self._val_dataset = MedGeeseDataset(
-                items=val_set, model_path=self.hparams.image_model_path  # type: ignore
+                items=val_set,
+                model_path=self.hparams.image_model_path,  # type: ignore
             )
         elif (
             stage == "test" or stage == "predict"
         ) and self._test_dataset is None:
             # Make test dataset
             self._test_dataset = MedGeeseDataset(
-                items=test_set, model_path=self.hparams.image_model_path  # type: ignore
+                items=test_set,
+                model_path=self.hparams.image_model_path,  # type: ignore
             )
         else:
             raise ValueError(f"Unexpected stage: {stage}")
 
     def train_dataloader(self) -> DataLoader:
-        """Return the training dataloader."""
+        """
+        Return the training dataloader.
+        """
         assert self._train_dataset is not None
         return DataLoader(
             self._train_dataset,
@@ -325,7 +337,9 @@ class MedGeeseDataModule(LightningDataModule):
         )
 
     def val_dataloader(self) -> DataLoader:
-        """Return the validation dataloader."""
+        """
+        Return the validation dataloader.
+        """
         assert self._val_dataset is not None
         return DataLoader(
             self._val_dataset,
@@ -335,7 +349,9 @@ class MedGeeseDataModule(LightningDataModule):
         )
 
     def test_dataloader(self) -> DataLoader:
-        """Return the test dataloader."""
+        """
+        Return the test dataloader.
+        """
         assert self._test_dataset is not None
         return DataLoader(
             self._test_dataset,
@@ -349,11 +365,12 @@ class MedGeeseDataset(Dataset):
     """Dataset instance for a dataloader.
 
     Params:
-        df: The dataframe containing the dataset, used for tracking sizes.
-        tensor_dir: The directory containing processed tensors.
+        items (list[str]): A list of paths to the processed tensors.
+        image_model_name (str): The huggingface name of the image tokenizer to
+        use.
     """
 
-    def __init__(self, items: list, model_path: str):
+    def __init__(self, items: list[str], model_path: str):
         # assume our dataset contains image path, segmentation mask path, label
         self.items = items
         self.safe_transforms = v2.Compose(
@@ -365,9 +382,11 @@ class MedGeeseDataset(Dataset):
             ]
         )
         self.danger_transforms = v2.Compose([v2.RandomRotation(90)])
+        # set this to False if you want to download the tokenizer, you only
+        # need to do this once
         self.processor = AutoImageProcessor.from_pretrained(
             model_path, local_files_only=False
-        )  # set this to False if you want to download the tokenizer, you only need to do this once
+        )
 
     def __getitem__(self, idx: int):
         """Fetch a single item from the dataset indexed by idx.
@@ -389,10 +408,10 @@ class MedGeeseDataset(Dataset):
         try_img, try_mask = self.danger_transforms(img, mask)
         if torch.max(try_mask) != 0:
             img, mask = try_img, try_mask
-        # else:
-        #     print('reverting danger transform, empty mask')
 
-        # one_hots = encode_one_hot(umls_labels) # ??
+        # This is where we tokenize the images
+        # TODO(liamhebert): Ideally, this should already be done when we load
+        # from disk.
         img = self.processor(
             images=img,
             return_tensors="pt",
@@ -401,15 +420,14 @@ class MedGeeseDataset(Dataset):
             do_center_crop=False,
             do_resize=False,
         )
-        # mask = self.processor(images=mask, return_tensors="pt", do_normalize=False, do_rescale=False, do_center_crop=False,  do_resize=False)
-        # if len(labels) > 1 or len(labels) != len(mask):
-        #     print(labels)
-        # print(type(mask))
+
         mask = mask.float()
         if torch.max(mask) == 0:
             raise Exception("Empty mask after")
         return img, mask, label, organ
 
     def __len__(self):
-        """Return the size of the dataset."""
+        """
+        Return the size of the dataset.
+        """
         return len(self.items)
