@@ -269,8 +269,8 @@ class Model(pl.LightningModule):
         )
 
         if self.hparams.scheduler is not None:  # type: ignore
-            scheduler = self.hparams.scheduler(
-                optimizer=optimizer  # type: ignore
+            scheduler = self.hparams.scheduler(  # type: ignore
+                optimizer=optimizer
             )
             return {
                 "optimizer": optimizer,
