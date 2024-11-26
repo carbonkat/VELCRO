@@ -1,0 +1,5 @@
+_target_: components.clip_medgeese.ClipMedGeese
+
+text_model_path: ${modality_encoder.text_model_name}
+vision_model_path: ${modality_encoder.vision_model_name}
+patch_size: ${modality_encoder.patch_size}
