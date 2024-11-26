@@ -1,30 +1,53 @@
-import torch
-from torch import nn
-from transformers import (
-    CLIPTextModelWithProjection,
-    CLIPVisionModelWithProjection,
-    AutoModelForMaskedLM,
-    AutoModelForImageClassification,
-)
+"""
+Code related to Medgeese v0.
+"""
 
 from model import TwoTowerEncoder
+import torch
+from torch import nn
 from torch import Tensor
+from transformers import AutoModelForImageClassification
+from transformers import AutoModelForSequenceClassification
 
 
 class ClipMedGeese(TwoTowerEncoder):
+    """
+    Model that matches patch embeddings to text embeddings, similar to CLIP.
+    """
+
     # TODO(liamhebert): Do we want to use a ClipTextModelWithProjection here?
-    text_model: AutoModelForMaskedLM
+    text_model: AutoModelForSequenceClassification
     vision_model: AutoModelForImageClassification
     patch_size: int = 16
 
     def __init__(
-        self, text_model_path: str, vision_model_path: str, patch_size: int
+        self,
+        text_model_path: str = "bert-base-uncased",
+        vision_model_path: str = "openai/clip-vit-large-patch14",
+        patch_size: int = 14,
     ):
+        """Constructs the model.
+
+        Args:
+            text_model_path (str): The huggingface model identifier for the text
+                model.
+            vision_model_path (str): The huggingface model identifier for the
+                vision model.
+            patch_size (int): The cnn patch size used for tokenization. This is
+                used to expand the pixel-level mask to the correct image patches.
+                This number can often be retrieved by looking at the model's
+                name. For example: "openai/clip-vit-large-patch14" has a patch
+                size of 14.
+        """
         super().__init__()
-        self.text_model = AutoModelForMaskedLM.from_pretrained(text_model_path)
+        self.text_model = AutoModelForSequenceClassification.from_pretrained(
+            text_model_path
+        )
         self.vision_model = AutoModelForImageClassification.from_pretrained(
             vision_model_path
         )
+        # TODO(liamhebert): We can probably grab this directly from the
+        # vision_model object, rather then relying on the user to pass it in.
         self.patch_size = patch_size
 
         self.expand_mask_kernel = nn.Conv2d(
@@ -42,6 +65,18 @@ class ClipMedGeese(TwoTowerEncoder):
     def forward(
         self, candidate_input: dict[str, Tensor], image_input: dict[str, Tensor]
     ) -> tuple[Tensor, Tensor]:
+        """Generates the required embeddings for the text and image inputs.
+
+        Args:
+            candidate_input (dict): Dict of the inputs required for the candidate
+                model.
+            image_input (dict): Dict of the inputs required for the image tower.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: Returns two tensors, the first
+            representing the candidate embeddings and the second representing the
+            image embeddings.
+        """
         img = image_input["pixel_values"]
         img = img.squeeze(1)
         img_embed = self.vision_model(pixel_values=img)

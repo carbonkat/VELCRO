@@ -1,21 +1,24 @@
-"""Model classes and utilities."""
+"""
+Model classes and utilities.
+"""
 
-from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from abc import ABC
+from abc import abstractmethod
+from typing import Callable, Tuple
 
+from loss import Loss
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import OptimizerLRScheduler
-from abc import ABC, abstractmethod
 import torch
 from torch import nn
 from torchmetrics import MaxMetric
 from torchmetrics import MeanMetric
-from typing import Callable
-from components.simple_dense_net import SimpleDenseNet
-from loss import Loss
 
 
 class TwoTowerEncoder(nn.Module, ABC):
+    """
+    Generic encoder class that should be implemented by experimental models.
+    """
 
     @abstractmethod
     def forward(
@@ -26,7 +29,8 @@ class TwoTowerEncoder(nn.Module, ABC):
         """Generates the required embeddings for the text and image inputs.
 
         Args:
-            candidate_input (dict): Dict of the inputs required for the candidate tower.
+            candidate_input (dict): Dict of the inputs required for the candidate
+                tower.
             image_input (dict): Dict of the inputs required for the image tower.
 
         Returns:
@@ -38,10 +42,17 @@ class TwoTowerEncoder(nn.Module, ABC):
 
 
 class Model(pl.LightningModule):
-    """Base class for models, fitting the PyTorch Lightning interface."""
+    """
+    Base class for models, fitting the PyTorch Lightning interface.
+    """
 
     encoder: TwoTowerEncoder
     loss: Loss
+
+    train_loss: MeanMetric
+    val_loss: MeanMetric
+    test_loss: MeanMetric
+    val_loss_best: MaxMetric
 
     def __init__(
         self,
@@ -51,6 +62,23 @@ class Model(pl.LightningModule):
         loss: Loss,
         compile: bool = False,
     ) -> None:
+        """Initializes the model.
+
+        Args:
+            optimizer (Callable[..., torch.optim.Optimizer]): Callable to create
+                the model optimizer. The callable should have all fields set
+                except for the `params` field.
+            scheduler (Callable[..., torch.optim.lr_scheduler.LRScheduler]):
+                Callable to create the model scheduler. The callable should have
+                all fields set except for the `optimizer` field.
+            encoder (TwoTowerEncoder): The main guts of the model, which will
+                generate the embeddings for the candidate item and image inputs.
+            loss (Loss): Loss that can take in roi and candidate embeddings
+                with true alignment indices.
+            compile (bool, optional): Whether to compile the model using torch.
+                This only works if shapes are consistent across batches.
+                Defaults to False.
+        """
         super().__init__()
 
         # Since net is a nn.Module, it is already saved in checkpoints by
@@ -93,9 +121,9 @@ class Model(pl.LightningModule):
         """Compute the loss for a batch of data.
 
         Args:
-            batch (dict): A dict containing two other dicts: one of the label data
-                ("y") and one of the input data ("x"). Tensors are expected to
-                have a shape of (batch_size, ...).
+            batch (dict): A dict containing two other dicts: one of the label
+                data ("y") and one of the input data ("x"). Tensors are expected
+                to have a shape of (batch_size, ...).
 
         Returns:
             The loss value for that batch, using self.loss.
@@ -107,7 +135,9 @@ class Model(pl.LightningModule):
         return loss, preds, y
 
     def on_train_start(self) -> None:
-        """Lightning hook that is called when training begins."""
+        """
+        Lightning hook that is called when training begins.
+        """
         # by default lightning executes validation step sanity checks before
         # training starts, so it's worth to make sure validation metrics don't
         # store results from these checks
@@ -120,9 +150,9 @@ class Model(pl.LightningModule):
         """Compute the loss and metrics for a training batch of data.
 
         Args:
-            batch (dict): A dict containing two other dicts: one of the label data
-                ("y") and one of the input data ("x"). Tensors are expected to
-                have a shape of (batch_size, ...).
+            batch (dict): A dict containing two other dicts: one of the label
+                data ("y") and one of the input data ("x"). Tensors are expected
+                to have a shape of (batch_size, ...).
             batch_idx (int): The index of the batch.
 
         Returns:
@@ -149,9 +179,9 @@ class Model(pl.LightningModule):
         """Compute the loss and metrics for a validation batch of data.
 
         Args:
-            batch (dict): A dict containing two other dicts: one of the label data
-                ("y") and one of the input data ("x"). Tensors are expected to
-                have a shape of (batch_size, ...).
+            batch (dict): A dict containing two other dicts: one of the label
+                data ("y") and one of the input data ("x"). Tensors are expected
+                to have a shape of (batch_size, ...).
             batch_idx: The index of the batch.
         """
         loss, preds, targets = self.model_step(batch)
@@ -186,9 +216,9 @@ class Model(pl.LightningModule):
         """Compute the loss and metrics for a test batch of data.
 
         Args:
-            batch (dict): A dict containing two other dicts: one of the label data
-                ("y") and one of the input data ("x"). Tensors are expected to
-                have a shape of (batch_size, ...).
+            batch (dict): A dict containing two other dicts: one of the label
+                data ("y") and one of the input data ("x"). Tensors are expected
+                to have a shape of (batch_size, ...).
             batch_idx: The index of the batch.
 
         Returns:
@@ -239,7 +269,9 @@ class Model(pl.LightningModule):
         )
 
         if self.hparams.scheduler is not None:  # type: ignore
-            scheduler = self.hparams.scheduler(optimizer=optimizer)  # type: ignore
+            scheduler = self.hparams.scheduler(  # type: ignore
+                optimizer=optimizer
+            )
             return {
                 "optimizer": optimizer,
                 "lr_scheduler": {

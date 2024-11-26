@@ -1,4 +1,6 @@
-"""Utilities for pretty printing hydra configs and enforcing exp tags."""
+"""
+Utilities for pretty printing hydra configs and enforcing exp tags.
+"""
 
 from pathlib import Path
 from typing import Sequence
@@ -12,7 +14,6 @@ import rich
 from rich.prompt import Prompt
 import rich.syntax
 import rich.tree
-
 from utils import pylogger
 
 log = pylogger.RankedLogger(__name__, rank_zero_only=True)
@@ -57,7 +58,8 @@ def print_config_tree(
             queue.append(field)
             if field in cfg
             else log.warning(
-                f"Field '{field}' not found in config. Skipping '{field}' config printing..."
+                f"Field '{field}' not found in config. Skipping '{field}' config"
+                "printing..."
             )
         )
 
