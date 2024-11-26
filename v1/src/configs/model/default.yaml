@@ -14,7 +14,7 @@ optimizer:
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
   # Must be partial to allow for the optimizer to be passed in.
-  _partial_: true 
+  _partial_: true
   mode: min
   factor: 0.1
   patience: 10
