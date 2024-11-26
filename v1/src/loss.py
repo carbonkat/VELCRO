@@ -1,15 +1,20 @@
-"""Loss classes."""
+"""
+Loss classes.
+"""
 
-import abc
+from abc import ABC
+from abc import abstractmethod
 
 import torch
 from torch import nn
 
 
-class Loss(abc.ABC):
-    """Abstract class for loss functions."""
+class Loss(ABC):
+    """
+    Abstract class for loss functions.
+    """
 
-    @abc.abstractmethod
+    @abstractmethod
     def __call__(
         self,
         roi_embeddings: torch.Tensor,
@@ -35,7 +40,9 @@ class Loss(abc.ABC):
 
 # TODO(liamhebert): create whatever loss set up we want here.
 class ContrastiveLoss(Loss):
-    """Cross-entropy loss function."""
+    """
+    Cross-entropy loss function.
+    """
 
     cosine_similarity: nn.CosineSimilarity = torch.nn.CosineSimilarity(dim=1)
     remove_duplicates: bool = True
@@ -59,8 +66,8 @@ class ContrastiveLoss(Loss):
                 shape (num_candidates, embedding_size) if remove_duplicates is
                 false, (batch_size * num_rois, embedding_size) otherwise.
             y_true: A dictionary containing the field "class_indices", which is a
-                tensor of shape (batch_size * num_rois) containing the indices of the
-                true class for each roi.
+                tensor of shape (batch_size * num_rois) containing the indices of
+                the true class for each roi.
 
         Returns:
             The cross-entropy loss value.
@@ -82,8 +89,8 @@ class ContrastiveLoss(Loss):
         )
 
         if self.remove_duplicates:
-            # To get around this, we can keep only the first instance of a positive
-            # class and negative pair.
+            # To get around this, we can keep only the first instance of a
+            # positive class and negative pair.
             maybe_repeated_indices = (
                 similarity_matrix.cumsum(dim=1) - 1
             ).clamp(min=0, max=1)
@@ -96,8 +103,8 @@ class ContrastiveLoss(Loss):
                 .tile(num_candidates, 1)
             )
 
-            # We set the similarity of the duplicate items to -1e9 so that they dont
-            # contribute to the loss.
+            # We set the similarity of the duplicate items to -1e9 so that they
+            # dont contribute to the loss.
             similarity = similarity.masked_fill(duplicate_mask.bool(), -1e9)
             similarity_matrix = similarity_matrix.masked_fill(
                 duplicate_mask.bool(), 0
