@@ -1,0 +1,17 @@
+lightning
+torch
+tqdm
+pandas
+pytest
+wandb
+absl-py
+rootutils
+shellcheck-py
+interrogate
+black
+isort
+pre-commit
+hydra_colorlog
+torchmetrics
+transformers
+scikit-learn
