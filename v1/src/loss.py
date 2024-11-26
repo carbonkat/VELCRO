@@ -38,16 +38,40 @@ class Loss(ABC):
         pass
 
 
-# TODO(liamhebert): create whatever loss set up we want here.
 class ContrastiveLoss(Loss):
-    """
-    Cross-entropy loss function.
+    """Contrastive loss function between the roi and candidate embeddings using
+    in-batch negatives.
+
+    This is done by aligning the positive roi regions to the positive candidate
+    embedding, and the treating all other candidate embeddings as negatives. The
+    implementation is similar to a cross entropy loss, where the "probability
+    logits" of each class (candidates) is the cosine similarity score between the
+    roi and candidate embeddings.
+
+    This implementation is as proposed by InfoNCE, but with a modification that
+    handles duplicate positive pairs.
+
+    Since we use in-batch negatives, it is possible that multiple items within
+    the same batch have the same positive candidate. However, InfoNCE only works
+    with a single positive class (due to cross entropy loss). To handle this, we
+    have an optional parameter ("remove_duplicates") that will check for and then
+    remove duplicate positive and negative pairs.
+
+    See: https://paperswithcode.com/method/infonce for more details.
     """
 
     cosine_similarity: nn.CosineSimilarity = torch.nn.CosineSimilarity(dim=1)
     remove_duplicates: bool = True
 
     def __init__(self, remove_duplicates: bool = True):
+        """Initializes the contrastive loss.
+
+        Args:
+            remove_duplicates (bool, optional): Whether to remove duplicate values
+            from the loss calculation. If you are guaranteed to not have duplicate
+            candidates, then this should be set to False for a speed up. Defaults
+            to True.
+        """
         self.remove_duplicates = remove_duplicates
         super().__init__()
 
