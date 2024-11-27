@@ -7,11 +7,11 @@ import json
 import os
 import os.path as osp
 
-import data.medgeese_v0_utils as utils
+from data import medgeese_v0_utils as utils
+from lightning import LightningDataModule
 import numpy as np
 import pandas as pd
 from PIL import Image
-from pytorch_lightning import LightningDataModule
 from sklearn.model_selection import train_test_split
 import torch
 from torch.utils.data import DataLoader
@@ -85,15 +85,22 @@ class MedGeeseDataModule(LightningDataModule):
         This is only called once on the rank 0 gpu per run, and results in
         memory are not replicated across gpus. This is useful for downloading.
         """
+
+        data_dir = self.hparams.data_dir
+        tensor_dir = self.hparams.tensor_dir
+        image_dir = self.hparams.image_dir
+
+        assert isinstance(data_dir, str)
+        assert isinstance(tensor_dir, str)
+        assert isinstance(image_dir, str)
+
         # TODO(liamhebert): Implement data preparation logic
-        if self.hparams.force_remake is False and osp.exists(
-            self.hparams.tensor_dir
-        ):
+        if self.hparams.force_remake is False and osp.exists(tensor_dir):
             return
 
         # get umls master dict:
         # TODO: reorganize so it is easier to get specific terms
-        with open(self.data_dir + "/" + "UMLS_formatted.json") as json_file:
+        with open(data_dir + "/" + "UMLS_formatted.json") as json_file:
             umls_terms = json.load(json_file)
 
         calc_mass_datasets = [
@@ -102,18 +109,16 @@ class MedGeeseDataModule(LightningDataModule):
             "labels_calc_mammograms_test.csv",
             "labels_mass_mammograms_test.csv",
         ]
-        calc_mass_dataframes = [
-            self.hparams.data_dir + "/" + x for x in calc_mass_datasets
-        ]
+        calc_mass_dataframes = [data_dir + "/" + x for x in calc_mass_datasets]
 
         calc_mass_dataframe = utils.process_calc_mass_dataframes(
             calc_mass_dataframes
         )
         duke_dataframe = pd.read_csv(
-            self.hparams.data_dir + "/duke_breast_cancer_annotations.csv"
+            data_dir + "/duke_breast_cancer_annotations.csv"
         )
         liver_dataframe = utils.process_liver_dataset(
-            self.hparams.data_dir + "/liver_dataset_fixed_trimmed.csv"
+            data_dir + "/liver_dataset_fixed_trimmed.csv"
         )
 
         datasets = [calc_mass_dataframe, duke_dataframe, liver_dataframe]
@@ -131,14 +136,12 @@ class MedGeeseDataModule(LightningDataModule):
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
 
-        os.makedirs(
-            self.hparams.tensor_dir + "/processed_tensors", exist_ok=True
-        )
+        os.makedirs(tensor_dir + "/processed_tensors", exist_ok=True)
 
         def process(row):
             if (
                 os.path.exists(
-                    self.hparams.tensor_dir
+                    tensor_dir
                     + "/processed_tensors/"
                     + str(row["index"])
                     + "-0.pt"
