@@ -1,5 +1,12 @@
-"""
-These tests validate whether components can be loaded in using Hydra.
+"""These tests validate whether components can be loaded in using Hydra.
+
+In particular, we test whether the defaults in the train.yaml and test.yaml
+can be loaded in and instantiated. As those configs get updated with new defaults,
+these tests will automatically get updated.
+
+See: https://hydra.cc/docs/advanced/defaults_list/
+and https://hydra.cc/docs/tutorials/basic/your_first_app/simple_cli/
+for more information on how Hydra works.
 """
 
 from pathlib import Path
