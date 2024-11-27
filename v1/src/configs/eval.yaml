@@ -1,0 +1,21 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - model: default
+  # TODO(liamhebert): Not a huge fan that modality_encoder is a top level package
+  # and not nested under model, but it was causing me issues, so... here it is.
+  - modality_encoder: clip
+  - data: v0 # choose datamodule with `test_dataloader()` for evaluation
+  - logger: null
+  - trainer: default
+  - paths: default
+  - extras: default
+  - hydra: default
+
+task_name: "eval"
+
+tags: ["dev"]
+
+# passing checkpoint path is necessary for evaluation
+ckpt_path: ???
