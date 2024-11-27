@@ -15,4 +15,7 @@ hydra_colorlog
 torchmetrics
 transformers
 scikit-learn
+pandas-stubs
+types-Pillow
+types-tqdm
 rich
