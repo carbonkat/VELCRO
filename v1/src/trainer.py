@@ -1,4 +1,6 @@
-"""Trainer class and parameters."""
+"""
+Trainer class and parameters.
+"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,7 +13,9 @@ from pytorch_lightning.loggers import wandb
 
 @dataclass
 class TrainerParameters:
-    """Dataclass containing hyperparameters for the dataset."""
+    """
+    Dataclass containing hyperparameters for the dataset.
+    """
 
     MAX_EPOCHS: int
 
@@ -37,7 +41,7 @@ def get_trainer(params: TrainerParameters, experiment_name: str) -> Trainer:
     trainer = Trainer(
         max_epochs=params.MAX_EPOCHS,
         logger=wandb.WandbLogger(
-            project="PersonalIOL",
+            project="MedGeese",
             name=f"{experiment_name}-{user}-{formatted_date}",
         ),
         callbacks=[ModelCheckpoint(monitor="val/loss", mode="min")],

@@ -13,7 +13,9 @@ from lightning_utilities.core.rank_zero import rank_zero_only
 
 
 class RankedLogger(logging.LoggerAdapter):
-    """A multi-GPU-friendly python command line logger."""
+    """
+    A multi-GPU-friendly python command line logger.
+    """
 
     def __init__(
         self,

@@ -1,10 +1,11 @@
-"""Utilities to log hydra configs using lightning loggers."""
+"""
+Utilities to log hydra configs using lightning loggers.
+"""
 
 from typing import Any, Dict
 
 from lightning_utilities.core.rank_zero import rank_zero_only
 from omegaconf import OmegaConf
-
 from utils import pylogger
 
 log = pylogger.RankedLogger(__name__, rank_zero_only=True)
