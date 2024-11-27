@@ -6,9 +6,9 @@ from abc import ABC
 from abc import abstractmethod
 from typing import Callable, Tuple
 
+import lightning as pl
+from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loss import Loss
-import pytorch_lightning as pl
-from pytorch_lightning.utilities.types import OptimizerLRScheduler
 import torch
 from torch import nn
 from torchmetrics import MaxMetric
