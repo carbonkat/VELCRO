@@ -140,9 +140,13 @@ class MedGeeseDataModule(LightningDataModule):
         with open(data_dir + "/" + "UMLS_formatted.json") as json_file:
             umls_terms = json.load(json_file)
 
+        # Tokenize the UMLS terms
         text_tokenizer = AutoTokenizer.from_pretrained(
             self.hparams.text_model_path
         )
+        # We tokenize all the terms together so that we don't have to worry about
+        # padding issues when we batch the data. That is, it will automatically
+        # pad all the terms to be the same length (the largest sequence).
         umls_text = [x["desc"] for x in umls_terms.values()]
         tokenized_umls = text_tokenizer(
             umls_text, return_tensors="pt", padding=True
