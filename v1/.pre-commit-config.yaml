@@ -103,7 +103,6 @@ repos:
       - id: codespell
         args:
           - --skip=logs/**,*.csv,*.ipynb,*.json
-          - -L=Golab
 
   # jupyter notebook cell output clearing
   - repo: https://github.com/kynan/nbstripout

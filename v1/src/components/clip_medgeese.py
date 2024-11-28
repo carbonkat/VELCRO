@@ -50,6 +50,18 @@ class ClipMedGeese(TwoTowerEncoder):
         # vision_model object, rather then relying on the user to pass it in.
         self.patch_size = patch_size
 
+        # Because masks are given as a region within pixel space (255, 255),
+        # we need to map them to the tokens that the vision model creates.
+        # To do this, we tokenize the masks similarly to how the images are
+        # tokenized, just without the learned CNN weights.
+        #
+        # In practice, this is done by defining a convolutional kernel that has
+        # the same kernel size (re: patch size) and stride as the underlying
+        # vision model. Then, we set the weights of the kernel to be all ones so
+        # that if any pixel in the stride is masked, the resulting patch is
+        # positive. We then treat all positive patches, now with the same number
+        # of tokens as the vision model, as the desired areas of interest.
+
         self.expand_mask_kernel = nn.Conv2d(
             3,
             1,

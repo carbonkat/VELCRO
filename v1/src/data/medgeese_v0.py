@@ -10,6 +10,7 @@ import os.path as osp
 from data import medgeese_v0_utils as utils
 from joblib import delayed
 from joblib import Parallel
+
 from lightning import LightningDataModule
 import numpy as np
 import pandas as pd
@@ -309,6 +310,10 @@ class MedGeeseDataModule(LightningDataModule):
                     print("skipping empty mask")
                     continue
 
+                # TODO(liamhebert): Ensure that files are saved in a somewhat
+                # standardized way to match the rest of the datasets. For
+                # instance, datasets in v1 are saved as npz files with
+                # dictionaries, rather than a tuple.
                 torch.save(
                     (img, mask, y, candidate_text, row.organ),
                     (f"{tensor_dir}/{index}-{str(i)}.pt"),

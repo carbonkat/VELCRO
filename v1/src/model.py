@@ -75,10 +75,16 @@ class Model(pl.LightningModule):
                 generate the embeddings for the candidate item and image inputs.
             loss (Loss): Loss that can take in roi and candidate embeddings
                 with true alignment indices.
-            compile (bool, optional): Whether to compile the model using torch.
-                This only works if shapes are consistent across batches.
+            compile (bool, optional): Whether to compile the model using
+                torch.compile, resulting in a speedup and increased memory
+                efficiency. The compilation process only works if shapes are
+                are consistent across batches, as different shapes will result
+                in different computational graphs and further recompilation.
                 Defaults to False.
+                See: https://pytorch.org/docs/stable/generated/torch.compile.html
         """
+        # TODO(liamhebert): We should consider whether we can standardize batches
+        # to benefit from torch.compile
         super().__init__()
 
         # Since net is a nn.Module, it is already saved in checkpoints by
