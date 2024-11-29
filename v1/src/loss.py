@@ -60,7 +60,7 @@ class ContrastiveLoss(Loss):
     See: https://paperswithcode.com/method/infonce for more details.
     """
 
-    cosine_similarity: nn.CosineSimilarity = torch.nn.CosineSimilarity(dim=1)
+    cosine_similarity: nn.CosineSimilarity = torch.nn.CosineSimilarity(dim=2)
     remove_duplicates: bool = True
     temperature: nn.Parameter
 
@@ -116,20 +116,28 @@ class ContrastiveLoss(Loss):
         class_indices = y_true["class_indices"]
         flattened_batch, roi_embed_dim = roi_embeddings.shape
         num_candidates, cand_embed_dim = candidate_embeddings.shape
-        if not self.remove_duplicates:
+        if self.remove_duplicates:
             assert flattened_batch == num_candidates
 
         assert roi_embed_dim == cand_embed_dim
 
-        # NOTE: This has multiple positives for each negative, which is not
-        # typical for a classification task, and may break cross entropy loss.
-        similarity_matrix = class_indices.eq(class_indices[None, :].t()).float()
         similarity = (
-            self.cosine_similarity(roi_embeddings, candidate_embeddings)
+            self.cosine_similarity(
+                candidate_embeddings, roi_embeddings.unsqueeze(1)
+            )
             / self.temperature
         )
+        assert similarity.shape == (
+            flattened_batch,
+            num_candidates,
+        ), f"{similarity.shape} != ({flattened_batch}, {num_candidates})"
 
         if self.remove_duplicates:
+            # NOTE: This has multiple positives for each negative, which is not
+            # typical for a classification task, and may break cross entropy loss.
+            similarity_matrix = class_indices.eq(
+                class_indices[None, :].t()
+            ).float()
             # To get around this, we can keep only the first instance of a
             # positive class and negative pair.
             maybe_repeated_indices = (
@@ -150,9 +158,18 @@ class ContrastiveLoss(Loss):
             similarity_matrix = similarity_matrix.masked_fill(
                 duplicate_mask.bool(), 0
             )
+        else:
+            # Since we are guaranteed to not have duplicate similarity scores,
+            # we treat the similarity matrix as a one-hot matrix with the true
+            # class indices.
+            similarity_matrix = torch.zeros_like(similarity)
+            similarity_matrix.scatter_(1, class_indices.unsqueeze(1), 1)
 
         # TODO(liamhebert): make sure the dimension is correct
+
         preds = torch.argmax(similarity, dim=1)
+        print(similarity)
+        print(similarity_matrix)
         return (
             torch.nn.functional.cross_entropy(similarity, similarity_matrix),
             preds,
