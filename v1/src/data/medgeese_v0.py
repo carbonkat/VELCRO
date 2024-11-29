@@ -10,7 +10,6 @@ import os.path as osp
 from data import medgeese_v0_utils as utils
 from joblib import delayed
 from joblib import Parallel
-
 from lightning import LightningDataModule
 import numpy as np
 import pandas as pd
@@ -159,7 +158,7 @@ class MedGeeseDataModule(LightningDataModule):
 
         for values, tokenized in zip(umls_terms.values(), expanded_umls_values):
             values["desc"] = tokenized
-            values["idx"] = torch.tensor([values["idx"]])
+            values["idx"] = torch.tensor(values["idx"])
 
         calc_mass_datasets = [
             "labels_calc_mammograms.csv",
@@ -239,10 +238,10 @@ class MedGeeseDataModule(LightningDataModule):
                 else Image.fromarray(np.load(mask_path))
             )
             try:
-                img = img.convert("RGB").resize((336, 336), Image.LANCZOS)
+                img = img.convert("RGB").resize((224, 224), Image.LANCZOS)
 
                 mask = np.array(
-                    mask.convert("RGB").resize((336, 336), Image.LANCZOS)
+                    mask.convert("RGB").resize((224, 224), Image.LANCZOS)
                 )
             except Exception as e:
                 print(
@@ -259,9 +258,6 @@ class MedGeeseDataModule(LightningDataModule):
             if is_breast:
                 # we already have the tumor seg mask so just need breast +
                 # background
-                # if len(img.getbands()) == 1:
-                #     img = img.convert("RGB")
-                #     mask = mask.convert("RGB")
                 breast = np.array(img)
                 breast[breast > 0] = 255
                 background = np.copy(breast)
@@ -506,7 +502,7 @@ class MedGeeseDataset(Dataset):
                 "candidate_input": candidate_text,
                 "image_input": {"mask": mask, "img": img.pixel_values},
             },
-            "y": label,
+            "y": {"class_indices": label},
         }
 
     def __len__(self):
