@@ -168,8 +168,7 @@ class ContrastiveLoss(Loss):
         # TODO(liamhebert): make sure the dimension is correct
 
         preds = torch.argmax(similarity, dim=1)
-        print(similarity)
-        print(similarity_matrix)
+
         return (
             torch.nn.functional.cross_entropy(similarity, similarity_matrix),
             preds,
