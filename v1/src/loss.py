@@ -9,7 +9,7 @@ import torch
 from torch import nn
 
 
-class Loss(ABC):
+class Loss(ABC, nn.Module):
     """
     Abstract class for loss functions.
     """
@@ -62,18 +62,34 @@ class ContrastiveLoss(Loss):
 
     cosine_similarity: nn.CosineSimilarity = torch.nn.CosineSimilarity(dim=1)
     remove_duplicates: bool = True
+    temperature: nn.Parameter
 
-    def __init__(self, remove_duplicates: bool = True):
+    def __init__(
+        self,
+        remove_duplicates: bool = True,
+        temperature: float = 0.30,
+        learnable_temperature: bool = False,
+    ):
         """Initializes the contrastive loss.
 
         Args:
             remove_duplicates (bool, optional): Whether to remove duplicate values
-            from the loss calculation. If you are guaranteed to not have duplicate
-            candidates, then this should be set to False for a speed up. Defaults
-            to True.
+                from the loss calculation. If you are guaranteed to not have
+                duplicate candidates, then this should be set to False for a
+                speed up. Defaults to True.
+            temperature (float, optional): The temperature to use for the softmax
+                function. A higher value will make the distribution more uniform,
+                while a lower value will make the distribution more peaky.
+                Defaults to 0.30.
+            learnable_temperature (bool, optional): Whether to learn the
+                temperature parameter. The initial value of the temperature will
+                be `temperature`. Defaults to False.
         """
-        self.remove_duplicates = remove_duplicates
         super().__init__()
+        self.remove_duplicates = remove_duplicates
+        self.temperature = nn.Parameter(
+            torch.tensor(temperature), requires_grad=learnable_temperature
+        )
 
     def __call__(
         self,
@@ -108,8 +124,9 @@ class ContrastiveLoss(Loss):
         # NOTE: This has multiple positives for each negative, which is not
         # typical for a classification task, and may break cross entropy loss.
         similarity_matrix = class_indices.eq(class_indices[None, :].t()).float()
-        similarity = self.cosine_similarity(
-            roi_embeddings, candidate_embeddings
+        similarity = (
+            self.cosine_similarity(roi_embeddings, candidate_embeddings)
+            / self.temperature
         )
 
         if self.remove_duplicates:

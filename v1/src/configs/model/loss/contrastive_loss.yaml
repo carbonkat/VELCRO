@@ -1,2 +1,4 @@
-__target__: loss.ContrastiveLoss
+_target_: loss.ContrastiveLoss
 remove_duplicates: true
+temperature: 0.50
+learnable_temperature: True
