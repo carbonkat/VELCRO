@@ -6,8 +6,9 @@ from model import TwoTowerEncoder
 import torch
 from torch import nn
 from torch import Tensor
-from transformers import AutoModelForImageClassification
-from transformers import AutoModelForSequenceClassification
+from transformers import AutoModel
+from transformers import CLIPVisionModel
+from transformers import ViTModel
 
 
 class ClipMedGeese(TwoTowerEncoder):
@@ -16,15 +17,16 @@ class ClipMedGeese(TwoTowerEncoder):
     """
 
     # TODO(liamhebert): Do we want to use a ClipTextModelWithProjection here?
-    text_model: AutoModelForSequenceClassification
-    vision_model: AutoModelForImageClassification
+    text_model: AutoModel
+    vision_model: ViTModel
     patch_size: int = 16
 
     def __init__(
         self,
         text_model_path: str = "bert-base-uncased",
         vision_model_path: str = "openai/clip-vit-large-patch14",
-        patch_size: int = 14,
+        is_clip: bool = True,
+        projection_dim: int = 512,
     ):
         """Constructs the model.
 
@@ -40,15 +42,32 @@ class ClipMedGeese(TwoTowerEncoder):
                 size of 14.
         """
         super().__init__()
-        self.text_model = AutoModelForSequenceClassification.from_pretrained(
-            text_model_path
-        )
-        self.vision_model = AutoModelForImageClassification.from_pretrained(
-            vision_model_path
-        )
-        # TODO(liamhebert): We can probably grab this directly from the
-        # vision_model object, rather then relying on the user to pass it in.
-        self.patch_size = patch_size
+        self.text_model = AutoModel.from_pretrained(text_model_path)
+        if is_clip:
+            self.vision_model = CLIPVisionModel.from_pretrained(
+                vision_model_path
+            )
+            # Weirdly, the CLIP model does not use the layer norm if you access
+            # the hidden states directly. To allow for gradient watching, we have
+            # to access the layer norm directly to apply it.
+            # https://github.com/huggingface/transformers/blob/main/src/transformers/models/clip/modeling_clip.py#L1104-L1116
+            self.vision_layer_norm = (
+                self.vision_model.vision_model.post_layernorm
+            )
+        else:
+            self.vision_model = ViTModel.from_pretrained(vision_model_path)
+            self.vision_layer_norm = nn.Identity()
+
+        self.text_model
+        self.vision_model
+
+        text_embedding_dim = self.text_model.config.hidden_size
+        vision_embedding_dim = self.vision_model.config.hidden_size
+
+        self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
+        self.vision_projection = nn.Linear(vision_embedding_dim, projection_dim)
+
+        self.patch_size = self.vision_model.config.patch_size
 
         # Because masks are given as a region within pixel space (255, 255),
         # we need to map them to the tokens that the vision model creates.
@@ -97,12 +116,21 @@ class ClipMedGeese(TwoTowerEncoder):
         img = img.squeeze(1)
         img_embed = self.vision_model(pixel_values=img)
 
+        img_embed = self.vision_layer_norm(
+            img_embed.last_hidden_state[:, 1:, :]
+        )
+        projected_img_embed = self.vision_projection(img_embed)
+
         mask = image_input["mask"]
         mask = (self.expand_mask_kernel(mask) > 0).float()
-        mask = mask.flatten(start_dim=1).unsqueeze(-1).float()
+        mask = mask.flatten(start_dim=1).float()
 
-        # TODO(liamhebert): Explain wtf is happening here (ie: why transpose)
-        mask_embeds = torch.matmul(img_embed.transpose(-2, -1), mask)
+        # If I understand correctly, this mask is made up of ones and zeroes. As
+        # a result, if you multiply it by the projected_embeddings, you would
+        # zero out the embeddings that are not in the mask.
+        # If that is correct, then this will do element-wise multiplication to
+        # zero out the embeddings that are not in the mask
+        mask_embeds = torch.einsum("bij, bi -> bj", projected_img_embed, mask)
         mask_embeds = mask_embeds.squeeze(-1)
 
         # TODO(liamhebert): Explain what this is doing
@@ -111,5 +139,6 @@ class ClipMedGeese(TwoTowerEncoder):
         normalized_mask_embeds = mask_embeds / mask_size
 
         candidate_embed = self.text_model(**candidate_input).pooler_output
+        candidate_embed = self.text_projection(candidate_embed)
 
         return candidate_embed, normalized_mask_embeds
