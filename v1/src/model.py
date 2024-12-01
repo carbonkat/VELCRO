@@ -101,7 +101,7 @@ class Model(pl.LightningModule):
         self.val_loss = MeanMetric()
         self.test_loss = MeanMetric()
 
-        # for tracking best so far validation accuracy
+        # for tracking best loss over training during validation
         self.val_loss_best = MinMetric()
 
     # TODO(liamhebert): Implement model logic
