@@ -125,17 +125,22 @@ class ClipMedGeese(TwoTowerEncoder):
         mask = (self.expand_mask_kernel(mask) > 0).float()
         mask = mask.flatten(start_dim=1).float()
 
-        # If I understand correctly, this mask is made up of ones and zeroes. As
-        # a result, if you multiply it by the projected_embeddings, you would
+        # This mask is made up of ones and zeroes with shape [b, num_tokens]. As
+        # a result, the dot-product between it and projected_embeddings
+        # [b, num_tokens, embed_dim] along the "num_tokens" dimension would
         # zero out the embeddings that are not in the mask.
-        # If that is correct, then this will do element-wise multiplication to
-        # zero out the embeddings that are not in the mask
         mask_embeds = torch.einsum("bij, bi -> bj", projected_img_embed, mask)
         mask_embeds = mask_embeds.squeeze(-1)
 
-        # TODO(liamhebert): Explain what this is doing
-        mask_size = mask.squeeze(-1).sum(dim=-1).unsqueeze(-1)
+        # Since the dot product above sums the tokens that make up the mask, we
+        # now have to normalize the mask embeddings by the number of tokens that
+        # make up the mask (ie: taking the mean). This is because some masks can
+        # be larger then others.
 
+        # First, we calculating the number of mask tokens per image. This is just
+        # done by summing the mask over the last dimension.
+        mask_size = mask.sum(dim=-1, keepdim=True)
+        # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
 
         candidate_embed = self.text_model(**candidate_input).pooler_output
