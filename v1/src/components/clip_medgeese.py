@@ -134,8 +134,13 @@ class ClipMedGeese(TwoTowerEncoder):
         mask_embeds = torch.einsum("bij, bi -> bj", projected_img_embed, mask)
         mask_embeds = mask_embeds.squeeze(-1)
 
-        # TODO(liamhebert): Explain what this is doing
-        mask_size = mask.squeeze(-1).sum(dim=-1).unsqueeze(-1)
+        # After summing the tokens that make up the mask, we now have to normalize
+        # the mask embeddings by the number of tokens that make up the mask.
+        # (ie: taking the mean).
+
+        # We are calculating the number of mask tokens per image. This is just
+        # done by summing the mask over the last dimension.
+        mask_size = mask.sum(dim=-1, keepdim=True)
 
         normalized_mask_embeds = mask_embeds / mask_size
 

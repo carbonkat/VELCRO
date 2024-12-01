@@ -377,18 +377,21 @@ class MedGeeseDataModule(LightningDataModule):
             self._train_dataset = MedGeeseDataset(
                 items=train_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
+                no_transforms=False,
             )
         if self._val_dataset is None:
             # make validation dataset
             self._val_dataset = MedGeeseDataset(
                 items=val_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
+                no_transforms=True,
             )
         if self._test_dataset is None:
             # Make test dataset
             self._test_dataset = MedGeeseDataset(
                 items=test_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
+                no_transforms=True,
             )
 
     def train_dataloader(self) -> DataLoader:
@@ -437,18 +440,28 @@ class MedGeeseDataset(Dataset):
         use.
     """
 
-    def __init__(self, items: list[str], model_path: str):
+    def __init__(
+        self, items: list[str], model_path: str, no_transforms: bool = False
+    ):
         # assume our dataset contains image path, segmentation mask path, label
         self.items = items
-        self.safe_transforms = v2.Compose(
-            [
-                v2.PILToTensor(),
-                # v2.ToDtype(torch.float16),
-                v2.RandomHorizontalFlip(p=0.5),
-                v2.RandomVerticalFlip(p=0.5),
-            ]
-        )
-        self.danger_transforms = v2.Compose([v2.RandomRotation(90)])
+        if no_transforms:
+            self.safe_transforms = v2.Compose(
+                [
+                    v2.PILToTensor(),
+                ]
+            )
+            self.danger_transforms = None
+        else:
+            self.safe_transforms = v2.Compose(
+                [
+                    v2.PILToTensor(),
+                    # v2.ToDtype(torch.float16),
+                    v2.RandomHorizontalFlip(p=0.5),
+                    v2.RandomVerticalFlip(p=0.5),
+                ]
+            )
+            self.danger_transforms = v2.Compose([v2.RandomRotation(90)])
 
         self.processor = AutoImageProcessor.from_pretrained(
             model_path, local_files_only=False
@@ -478,9 +491,10 @@ class MedGeeseDataset(Dataset):
             raise Exception("Empty mask pre")
 
         img, mask = self.safe_transforms(img, mask)
-        try_img, try_mask = self.danger_transforms(img, mask)
-        if torch.max(try_mask) != 0:
-            img, mask = try_img, try_mask
+        if self.danger_transforms is not None:
+            try_img, try_mask = self.danger_transforms(img, mask)
+            if torch.max(try_mask) != 0:
+                img, mask = try_img, try_mask
 
         # This is where we tokenize the images
         # Because we do the random transforms as part of the __getitem__ method,
