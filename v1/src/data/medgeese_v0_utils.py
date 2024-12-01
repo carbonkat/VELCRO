@@ -58,6 +58,7 @@ def process_calc_mass_dataframes(paths: list[str]) -> pd.DataFrame:
                 f'Unexpected path: {path}. Expecting path with "mass" or "calc"'
                 "in name."
             )
+        final_dfs.append(df)
     return pd.concat(final_dfs)
 
 

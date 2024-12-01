@@ -89,7 +89,11 @@ class ClipMedGeese(TwoTowerEncoder):
             representing the candidate embeddings and the second representing the
             image embeddings.
         """
-        img = image_input["pixel_values"]
+        # TODO(liamhebert): Ideally, we should have "img" be a field and we map
+        # it to self.vision model (ie: self.vision_model(**image_input["img"]))
+        # That way it can be flexible in case other models have different input
+        # types.
+        img = image_input["img"]
         img = img.squeeze(1)
         img_embed = self.vision_model(pixel_values=img)
 

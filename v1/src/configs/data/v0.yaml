@@ -14,3 +14,6 @@ force_remake: False # Set from commandline "data.force_remake=True"
 pin_memory: True
 
 image_model_path: ${modality_encoder.vision_model_name}
+text_model_path: ${modality_encoder.text_model_name}
+
+debug: False

@@ -4,13 +4,13 @@
 root_dir: ${oc.env:PROJECT_ROOT}
 
 # path to raw data directory
-data_dir: ${paths.root_dir}/data/
+data_dir: ${paths.root_dir}/data/dataset_files/
 
 # path to the image data directory
 image_dir: ${paths.data_dir}/images/
 
 # path to processed data directory
-tensor_dir: ${paths.root_dir}/tensors/
+tensor_dir: ${paths.data_dir}/processed_tensors/
 
 # path to logging directory
 log_dir: ${paths.root_dir}/logs/
