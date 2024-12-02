@@ -11,7 +11,9 @@ from lightning import LightningModule
 from lightning import Trainer
 import lightning as L
 from lightning.pytorch.loggers import Logger
+from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig
+import torch
 from utils import extras
 from utils import get_metric_value
 from utils import instantiate_callbacks
@@ -21,6 +23,7 @@ from utils import RankedLogger
 from utils import task_wrapper
 
 log = RankedLogger(__name__, rank_zero_only=True)
+torch.set_float32_matmul_precision("medium")
 
 
 @task_wrapper
@@ -53,6 +56,9 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     log.info("Instantiating loggers...")
     logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
+    for logg in logger:
+        if isinstance(logg, WandbLogger):
+            logg.watch(model, log_freq=100, log="all")
 
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(
@@ -82,6 +88,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     if cfg.get("test"):
         log.info("Starting testing!")
+        assert trainer.checkpoint_callback is not None
         ckpt_path = trainer.checkpoint_callback.best_model_path
         if ckpt_path == "":
             log.warning(

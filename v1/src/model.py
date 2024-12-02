@@ -11,8 +11,8 @@ from lightning.pytorch.utilities.types import OptimizerLRScheduler
 from loss import Loss
 import torch
 from torch import nn
-from torchmetrics import MaxMetric
 from torchmetrics import MeanMetric
+from torchmetrics import MinMetric
 
 
 class TwoTowerEncoder(nn.Module, ABC):
@@ -52,7 +52,7 @@ class Model(pl.LightningModule):
     train_loss: MeanMetric
     val_loss: MeanMetric
     test_loss: MeanMetric
-    val_loss_best: MaxMetric
+    val_loss_best: MinMetric
 
     def __init__(
         self,
@@ -101,8 +101,8 @@ class Model(pl.LightningModule):
         self.val_loss = MeanMetric()
         self.test_loss = MeanMetric()
 
-        # for tracking best so far validation accuracy
-        self.val_loss_best = MaxMetric()
+        # for tracking best loss over training during validation
+        self.val_loss_best = MinMetric()
 
     # TODO(liamhebert): Implement model logic
 

@@ -116,6 +116,7 @@ class ClipMedGeese(TwoTowerEncoder):
         img = img.squeeze(1)
         img_embed = self.vision_model(pixel_values=img)
 
+        # First token is the CLS embedding, which we do not want.
         img_embed = self.vision_layer_norm(
             img_embed.last_hidden_state[:, 1:, :]
         )
