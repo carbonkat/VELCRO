@@ -171,7 +171,7 @@ class Model(pl.LightningModule):
         self.log(
             "train/loss",
             self.train_loss,
-            on_step=False,
+            on_step=True,
             on_epoch=True,
             prog_bar=True,
         )
