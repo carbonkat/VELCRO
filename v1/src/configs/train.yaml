@@ -8,7 +8,7 @@ defaults:
   # TODO(liamhebert): Not a huge fan that modality_encoder is a top level package
   # and not nested under model, but it was causing me issues, so... here it is.
   - modality_encoder: clip
-  - data: v0
+  - data: v1
   - callbacks: default
   - logger: null # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
   - trainer: gpu
@@ -17,7 +17,7 @@ defaults:
   - hydra: default
 
   # config for hyperparameter optimization
-  - hparams_search: null
+  - hparams_search: default
 
   # experiment configs allow for version control of specific hyperparameters
   # e.g. best hyperparameters for given model and datamodule
