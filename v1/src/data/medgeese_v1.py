@@ -161,23 +161,38 @@ class MedGeeseDataModule(LightningDataModule):
         for values, tokenized in zip(umls_terms.values(), expanded_umls_values):
             values["desc"] = tokenized
             values["idx"] = torch.tensor(values["idx"])
-
-        print("working....")
-        #files = glob(os.path.join(data_dir, '/**/*npz'), recursive=True)
-        #print(len(files))
         
+
         datasets = []
         # Walk through each file and load it
         for fname in os.listdir(data_dir):
             path = os.path.join(data_dir, fname)
             if os.path.isdir(path) and not (fname == 'processed_tensors'):
-                # skip directories
                 datasets.append(path)
 
         master_files = []
         folders = []
+
+        # Skipping over multi-concept datasets for now
+        # TODO(kathryncarbone): implement logic to isolate multi-concept
+        # masks and split into single-concept masks
+        passing_over = [
+                        "AMOSMR",
+                        "BraTS_FLAIR",
+                        "BraTS_T1",
+                        "BraTS_T1CE",
+                        "crossmoda"
+                    ]
+        
         for root, dirs, files in os.walk(data_dir):
             for file in files:
+                # Skipping over multi-concept datasets
+                skip = False
+                for name in passing_over:
+                    if name in root:
+                        skip = True
+                if skip:
+                    continue
                 if file.endswith('.npz'):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
@@ -186,6 +201,7 @@ class MedGeeseDataModule(LightningDataModule):
         mega = pd.DataFrame({'File':master_files, 'Dataset': folders})
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
+
         # A dictionary to assist with mapping UMLS terms to dataset instances.
         # Mapping is performed on a per-dataset basis to make adding new datasets
         # easier.
@@ -202,18 +218,25 @@ class MedGeeseDataModule(LightningDataModule):
             ):
                 return
             
-            # TODO: RESIZE IMAGES
-            #MATCH UMLS TERM TO DATASET INSTANCE
             index = str(row.index)
             dataset = row.Dataset
             packed_data = load(row.File)
             img = packed_data['imgs']
             mask = packed_data['gts']
 
-            # assume masks correspond to single concept for now
+            # Assume masks correspond to single concept for now
             mask[mask!=0] = 255
 
-            #TODO: add test to make sure the mask and image shape are the same
+            # TODO(kathryncarbone): add test to make sure the mask and 
+            # image shape are the same
+
+            if img.shape[0] > 3 and img.shape[2] != 3:
+                print(img.shape)
+                imgs, masks = m_utils.expand_3d(img, mask)
+            else:
+                # Wrap images and masks in dummy lists
+                imgs = [img]
+                masks = [mask]
 
             potential_terms = term_mapping[dataset]
             if len(potential_terms) == 1:
@@ -223,25 +246,26 @@ class MedGeeseDataModule(LightningDataModule):
             y = candidate_term['idx']
             candidate_text = candidate_term['desc']
 
-            #i think we need to keep this part!
-            try:
-                img = Image.fromarray(img).convert("RGB").resize((224, 224), Image.LANCZOS)
-                mask = Image.fromarray(mask).convert("RGB").resize((224, 224), Image.LANCZOS)
-            except Exception as e:
-                print(
-                    f"Error on file when resizing: {row.File}"
-                )
-                print(e)
+            for img, mask in zip(imgs, masks):
+                try:
+                    img = Image.fromarray(img).convert("RGB").resize((224, 224), Image.LANCZOS)
+                    mask = Image.fromarray(mask).convert("RGB").resize((224, 224), Image.LANCZOS)
 
+                    # TODO(liamhebert): Ensure that files are saved in a somewhat
+                    # standardized way to match the rest of the datasets. For
+                    # instance, datasets in v1 are saved as npz files with
+                    # dictionaries, rather than a tuple.
+                    torch.save(
+                        (img, mask, y, candidate_text),
+                        (f"{tensor_dir}/{index}.pt"),
+                    )
 
-            # TODO(liamhebert): Ensure that files are saved in a somewhat
-            # standardized way to match the rest of the datasets. For
-            # instance, datasets in v1 are saved as npz files with
-            # dictionaries, rather than a tuple.
-            torch.save(
-                (img, mask, y, candidate_text),
-                (f"{tensor_dir}/{index}.pt"),
-            )
+                except Exception as e:
+                    print(
+                        f"Error on file when resizing: {row.File}"
+                    )
+                    print(e)
+
 
         logger.info("pre-tokenizing data....")
         #expects dataframe with paths for img, mask, 

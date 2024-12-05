@@ -5,6 +5,7 @@ MedGeese dataset.
 
 import pandas as pd
 import os
+import numpy as np
 
 
 def parse_file(dataset: str, path: str, candidates: list[str]) -> str:
@@ -31,3 +32,24 @@ def parse_file(dataset: str, path: str, candidates: list[str]) -> str:
         if 'benign' in standard:
             return candidates[0]
         return candidates[1]
+    
+def expand_3d(image: np.array, mask: np.array) -> tuple[list[np.array], list[np.array]]:
+    """
+    Function for expanding 3D volumes and extracting nonzero-ed masks
+
+    Args:
+        image (np.array): numpy array of original 3D volume
+        mask (np.array): numpy array of 3D volume masks
+
+    Returns:
+        tuple[list[np.array], list[np.array]]: paired list of expanded images and masks
+    """
+
+    images, masks = [], []
+    for i in range(mask.shape[0]):
+        if len(np.unique(mask[i])) == 1:
+            continue
+        else:  
+            images.append(image[i])
+            masks.append(mask[i])
+    return (images, masks)
