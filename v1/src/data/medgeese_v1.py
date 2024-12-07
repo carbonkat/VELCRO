@@ -173,32 +173,19 @@ class MedGeeseDataModule(LightningDataModule):
         master_files = []
         folders = []
 
-        # Skipping over multi-concept datasets for now
         # TODO(kathryncarbone): implement logic to isolate multi-concept
-        # masks and split into single-concept masks
-        passing_over = [
-                        "AMOSMR",
-                        "BraTS_FLAIR",
-                        "BraTS_T1",
-                        "BraTS_T1CE",
-                        "crossmoda"
-                    ]
-        
-        for root, dirs, files in os.walk(data_dir):
+        # masks and split into single-concept masks. This may require
+        # pulling the original datasets and performing manual preprocessing.
+        # For now, all multi-concept datasets have been removed.
+        for root, _, files in os.walk(data_dir):
             for file in files:
-                # Skipping over multi-concept datasets
-                skip = False
-                for name in passing_over:
-                    if name in root:
-                        skip = True
-                if skip:
-                    continue
                 if file.endswith('.npz'):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
             
 
         mega = pd.DataFrame({'File':master_files, 'Dataset': folders})
+
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
 
@@ -224,30 +211,45 @@ class MedGeeseDataModule(LightningDataModule):
             img = packed_data['imgs']
             mask = packed_data['gts']
 
-            # Assume masks correspond to single concept for now
-            mask[mask!=0] = 255
+            if len(np.unique(mask)) == 1:
+                return
 
             # TODO(kathryncarbone): add test to make sure the mask and 
             # image shape are the same
 
-            if img.shape[0] > 3 and img.shape[2] != 3:
-                print(img.shape)
+            if len(img.shape) > 2 and img.shape[2] != 3:
                 imgs, masks = m_utils.expand_3d(img, mask)
             else:
-                # Wrap images and masks in dummy lists
                 imgs = [img]
                 masks = [mask]
+            
+            # Retrieve expanded masks for multi-concept datasets
+            imgs, masks = m_utils.multi_mask_processing(imgs, masks, dataset)
 
             potential_terms = term_mapping[dataset]
+            # Grabbing UMLS terms and standardizing list length between
+            # images, masks, and terms.
             if len(potential_terms) == 1:
-                candidate_term = umls_terms[potential_terms[0]]
-            else:
-                candidate_term = umls_terms[m_utils.parse_file(dataset, row.File, potential_terms)]
-            y = candidate_term['idx']
-            candidate_text = candidate_term['desc']
+                candidate_terms = [umls_terms[potential_terms[0]]] * len(imgs)
 
-            for img, mask in zip(imgs, masks):
+            elif np.max(masks[0]) == 255:
+                candidate_terms = [umls_terms[m_utils.parse_file(dataset, row.File, potential_terms)]] * len(imgs)
+                if candidate_terms[0] == None:
+                    return
+            else:
+                candidate_mini_terms, masks = m_utils.match_term_mask(masks, imgs, potential_terms)
+                candidate_terms = []
+                for term in candidate_mini_terms:
+                    candidate_terms.append(umls_terms[term])
+
+
+            for i, img, mask, term in zip(range(len(imgs)), imgs, masks, candidate_terms):
+                y = term['idx']
+                candidate_text = term['desc']
+                if dataset == "LIDC-IDRI":
+                    print(img.shape, mask.shape)
                 try:
+
                     img = Image.fromarray(img).convert("RGB").resize((224, 224), Image.LANCZOS)
                     mask = Image.fromarray(mask).convert("RGB").resize((224, 224), Image.LANCZOS)
 
@@ -257,18 +259,19 @@ class MedGeeseDataModule(LightningDataModule):
                     # dictionaries, rather than a tuple.
                     torch.save(
                         (img, mask, y, candidate_text),
-                        (f"{tensor_dir}/{index}.pt"),
+                        (f"{tensor_dir}/{index}-{i}.pt"),
                     )
 
                 except Exception as e:
                     print(
                         f"Error on file when resizing: {row.File}"
                     )
+                    print(img.shape, mask.shape)
                     print(e)
 
 
         logger.info("pre-tokenizing data....")
-        #expects dataframe with paths for img, mask, 
+
         Parallel(n_jobs=-1, backend="threading")(
             delayed(process)(row)
             for row in tqdm(mega.itertuples(index=False), total=len(mega))
@@ -419,7 +422,6 @@ class MedGeeseDataset(Dataset):
         assert isinstance(label, torch.Tensor), f"{type(label)=}"
         assert isinstance(candidate_text, dict), f"{type(candidate_text)=}"
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
-        #assert isinstance(organ, str), f"{type(organ)=}"
 
         mask = tv.Mask(mask)
         img = tv.Image(img)
