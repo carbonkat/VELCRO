@@ -246,8 +246,6 @@ class MedGeeseDataModule(LightningDataModule):
             for i, img, mask, term in zip(range(len(imgs)), imgs, masks, candidate_terms):
                 y = term['idx']
                 candidate_text = term['desc']
-                if dataset == "LIDC-IDRI":
-                    print(img.shape, mask.shape)
                 try:
 
                     img = Image.fromarray(img).convert("RGB").resize((224, 224), Image.LANCZOS)
