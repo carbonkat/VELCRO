@@ -6,12 +6,13 @@ from glob import glob
 import json
 import os
 import os.path as osp
-from numpy import load
 
-#from data import medgeese_v0_utils as utils
+from data import medgeese_v1_utils as m_utils
+# from data import medgeese_v0_utils as utils
 from joblib import delayed
 from joblib import Parallel
 from lightning import LightningDataModule
+from numpy import load
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -26,7 +27,6 @@ from transformers import AutoImageProcessor
 from transformers import AutoTokenizer
 from transformers import BatchEncoding
 from utils import RankedLogger
-from data import medgeese_v1_utils as m_utils
 
 tqdm.pandas()
 
@@ -140,7 +140,7 @@ class MedGeeseDataModule(LightningDataModule):
         # get umls master dict:
         with open(data_dir + "/" + "UMLS_formatted.json") as json_file:
             umls_terms = json.load(json_file)
-        
+
         # Tokenize the UMLS terms
         text_tokenizer = AutoTokenizer.from_pretrained(
             self.hparams.text_model_path
@@ -161,13 +161,12 @@ class MedGeeseDataModule(LightningDataModule):
         for values, tokenized in zip(umls_terms.values(), expanded_umls_values):
             values["desc"] = tokenized
             values["idx"] = torch.tensor(values["idx"])
-        
 
         datasets = []
         # Walk through each file and load it
         for fname in os.listdir(data_dir):
             path = os.path.join(data_dir, fname)
-            if os.path.isdir(path) and not (fname == 'processed_tensors'):
+            if os.path.isdir(path) and not (fname == "processed_tensors"):
                 datasets.append(path)
 
         master_files = []
@@ -179,12 +178,11 @@ class MedGeeseDataModule(LightningDataModule):
         # For now, all multi-concept datasets have been removed.
         for root, _, files in os.walk(data_dir):
             for file in files:
-                if file.endswith('.npz'):
+                if file.endswith(".npz"):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
-            
 
-        mega = pd.DataFrame({'File':master_files, 'Dataset': folders})
+        mega = pd.DataFrame({"File": master_files, "Dataset": folders})
 
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
@@ -204,17 +202,17 @@ class MedGeeseDataModule(LightningDataModule):
                 and not self.hparams.force_remake
             ):
                 return
-            
+
             index = str(row.index)
             dataset = row.Dataset
             packed_data = load(row.File)
-            img = packed_data['imgs']
-            mask = packed_data['gts']
+            img = packed_data["imgs"]
+            mask = packed_data["gts"]
 
             if len(np.unique(mask)) == 1:
                 return
 
-            # TODO(kathryncarbone): add test to make sure the mask and 
+            # TODO(kathryncarbone): add test to make sure the mask and
             # image shape are the same
 
             if len(img.shape) > 2 and img.shape[2] != 3:
@@ -222,7 +220,7 @@ class MedGeeseDataModule(LightningDataModule):
             else:
                 imgs = [img]
                 masks = [mask]
-            
+
             # Retrieve expanded masks for multi-concept datasets
             imgs, masks = m_utils.multi_mask_processing(imgs, masks, dataset)
 
@@ -233,23 +231,38 @@ class MedGeeseDataModule(LightningDataModule):
                 candidate_terms = [umls_terms[potential_terms[0]]] * len(imgs)
 
             elif np.max(masks[0]) == 255:
-                candidate_terms = [umls_terms[m_utils.parse_file(dataset, row.File, potential_terms)]] * len(imgs)
-                if candidate_terms[0] == None:
+                candidate_terms = [
+                    umls_terms[
+                        m_utils.parse_file(dataset, row.File, potential_terms)
+                    ]
+                ] * len(imgs)
+                if candidate_terms[0] is None:
                     return
             else:
-                candidate_mini_terms, masks = m_utils.match_term_mask(masks, imgs, potential_terms)
+                candidate_mini_terms, masks = m_utils.match_term_mask(
+                    masks, imgs, potential_terms
+                )
                 candidate_terms = []
                 for term in candidate_mini_terms:
                     candidate_terms.append(umls_terms[term])
 
-
-            for i, img, mask, term in zip(range(len(imgs)), imgs, masks, candidate_terms):
-                y = term['idx']
-                candidate_text = term['desc']
+            for i, img, mask, term in zip(
+                range(len(imgs)), imgs, masks, candidate_terms
+            ):
+                y = term["idx"]
+                candidate_text = term["desc"]
                 try:
 
-                    img = Image.fromarray(img).convert("RGB").resize((224, 224), Image.LANCZOS)
-                    mask = Image.fromarray(mask).convert("RGB").resize((224, 224), Image.LANCZOS)
+                    img = (
+                        Image.fromarray(img)
+                        .convert("RGB")
+                        .resize((224, 224), Image.LANCZOS)
+                    )
+                    mask = (
+                        Image.fromarray(mask)
+                        .convert("RGB")
+                        .resize((224, 224), Image.LANCZOS)
+                    )
 
                     # TODO(liamhebert): Ensure that files are saved in a somewhat
                     # standardized way to match the rest of the datasets. For
@@ -261,12 +274,9 @@ class MedGeeseDataModule(LightningDataModule):
                     )
 
                 except Exception as e:
-                    print(
-                        f"Error on file when resizing: {row.File}"
-                    )
+                    print(f"Error on file when resizing: {row.File}")
                     print(img.shape, mask.shape)
                     print(e)
-
 
         logger.info("pre-tokenizing data....")
 
