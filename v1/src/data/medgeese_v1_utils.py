@@ -1,6 +1,6 @@
 """
 Various utility functions for processing the specific datasets that make up the
-MedGeese dataset.
+MedGeese v1 dataset.
 """
 
 import os
@@ -8,7 +8,9 @@ import os
 import numpy as np
 
 
-def parse_file(dataset: str, path: str, candidates: list[str]) -> str:
+def parse_concept_from_file_name(
+    dataset: str, path: str, candidates: list[str]
+) -> str:
     """
     Function for obtaining the correct UMLS mapping for datasets with
     terms embedded in the file structure.
@@ -23,6 +25,8 @@ def parse_file(dataset: str, path: str, candidates: list[str]) -> str:
         str: a string pertaining to the correct matching
     """
 
+    # TODO(carbonkat): convert dataset concept directory from lists of
+    # concepts to a dictionary of concepts.
     file = os.path.basename(path)
     standard = file.lower()
     if dataset == "PAPILA":
@@ -62,21 +66,23 @@ def match_term_mask(
     filtered_masks = []
     candidates = []
     filtered_imgs = []
-    for i in range(len(masks)):
-        if np.unique(masks[i])[1] < len(umls_terms):
-            candidate_label = umls_terms[np.unique(masks[i])[1]]
+    for i, mask in enumerate(masks):
+        # Should only be one unique label/mask now
+        if np.unique(mask)[1] < len(umls_terms):
+            candidate_label = umls_terms[np.unique(mask)[1]]
             candidates.append(candidate_label)
-            filtered_masks.append(masks[i])
+            filtered_masks.append(mask)
             filtered_imgs.append(imgs[i])
 
     return candidates, filtered_masks
 
 
-def expand_3d(
+def extract_2d_masks(
     image: np.array, mask: np.array
 ) -> tuple[list[np.array], list[np.array]]:
     """
-    Function for expanding 3D volumes and extracting nonzero-ed masks.
+    Function for expanding 3D volumes and extracting valid masks.
+    Invalid masks are those which have no concept segmentation labels.
     Expects 3D volumes to be expanded along axis 0.
 
     Args:
@@ -89,6 +95,11 @@ def expand_3d(
     """
 
     images, masks = [], []
+    assert (
+        len(image.shape) == 3 and len(mask.shape) == 3
+    ), f"Unexpected image or mask shape. Expected (i, j, k), got (image) \
+        {image.shape=} and (mask) {mask.shape=}."
+
     for i in range(mask.shape[0]):
         if len(np.unique(mask[i])) == 1:
             continue
@@ -129,13 +140,13 @@ def multi_mask_processing(
         "COVID19-CT-Seg-Bench",
         "CT_AbdTumor",
         "TCIA-LCTSC",
-        "Chest-Xray-Masks-and-Labels",
         "CT-ORG",
         "TotalSeg_cardiac",
         "TotalSeg_muscles",
         "TotalSeg_organs",
     ]
 
+    # TODO(carbonkat): add multi_label_dataset as flag in dataframe.
     if dataset not in multi_label_datasets:
         for mask in masks:
             mask[mask != 0] = 255
@@ -143,12 +154,19 @@ def multi_mask_processing(
         return images, expanded_masks
     else:
         new_images = []
-        for i in range(len(masks)):
-            submasks = np.unique(masks[i])[1:]
+        for mask, img in zip(masks, images):
+            # Generate a new submask which only contains
+            # labels for a single concept in multi-concept
+            # datasets.
+            submasks = np.unique(mask)[1:]
             for label in submasks:
-                new_submask = masks[i].copy()
-                new_submask[masks[i] == label] = label
+                new_submask = mask.copy()
+                # Zero out all pixels related to other concepts,
+                # but do not standardize to 255. This is because
+                # we need to use the labels to match to their
+                # corresponding UMLS terms later on.
+                new_submask[mask != label] = 0
                 expanded_masks.append(new_submask)
-                new_images.append(images[i].copy())
+                new_images.append(img.copy())
 
         return new_images, expanded_masks
