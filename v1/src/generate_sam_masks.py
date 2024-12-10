@@ -47,13 +47,14 @@ def main():
     # TODO(carbonkat): link this with the datadir parameter set in the paths file
     # in configs.
     data_dir = "<insert data directory here>"
-    mask_dir = "<insert mask directory here>"
+    mask_dir = "<insert desired mask directory here>"
 
     # TODO(carbonkat): make this path dynamic
-    sam = sam_model_registry["default"](checkpoint="<insert checkpoint here>")
+    sam = sam_model_registry["default"](
+        checkpoint="<insert checkpoint file path here>"
+    )
     sam.to(device="cuda")
     mask_predictor = SamPredictor(sam)
-    print("done loading model!")
 
     file_folder = []
     if not os.path.exists(mask_dir):
@@ -61,7 +62,9 @@ def main():
 
     for root, _, files in os.walk(data_dir):
         for file in files:
-            if file.endswith(".npz"):
+
+            # TODO(carbonkat): make this much more elegant
+            if file.endswith(".npz") and mask_dir not in root:
                 original_path = root
                 modality_subfolder = original_path.replace(data_dir, "")[1:]
                 modality_folder = os.path.dirname(modality_subfolder)
@@ -76,7 +79,7 @@ def main():
 
                 full_path = os.path.join(root, file)
                 # Skip over files if they have already been generated
-                if os.path.exists(os.path.join(mask_dir, file)):
+                if os.path.exists(os.path.join(new_mask_subfolder, file)):
                     continue
                 else:
                     file_folder.append(full_path)
@@ -152,7 +155,11 @@ def main():
             final_mask = all_masks[0]
 
         data_dict["gts"] = final_mask
-        np.savez(os.path.join(mask_folder, os.path.basename(f)), data_dict)
+        np.savez(
+            os.path.join(mask_folder, os.path.basename(f)),
+            imgs=data_dict["imgs"],
+            gts=data_dict["gts"],
+        )
 
 
 if __name__ == "__main__":
