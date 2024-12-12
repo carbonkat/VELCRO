@@ -30,7 +30,7 @@ hydra:
     n_jobs: 1
 
     # 'minimize' or 'maximize' the objective
-    direction: maximize
+    direction: minimize
 
     # total number of runs that will be executed
     n_trials: 20
@@ -45,8 +45,5 @@ hydra:
 
     # define hyperparameter search space
     params:
-      model.optimizer.lr: range(0.0001, 0.1) # all values between 0.0001 to 0.1
+      model.optimizer.lr: range(0.0001, 0.1, 0.01) # all values between 0.0001 to 0.1
       data.batch_size: choice(32, 64, 128, 256)
-      # model.net.lin1_size: choice(64, 128, 256)
-      # model.net.lin2_size: choice(64, 128, 256)
-      # model.net.lin3_size: choice(32, 64, 128, 256)

@@ -1,5 +1,9 @@
 """
-Dataset classes and utilities for the v0 dataset.
+Dataset classes and utilities for the V2 data. The V2 dataset is composed of
+image, segmentation mask pairs pertaining to medically relevant image artifacts
+found in various modalities (CT, mammograms, ultrasounds, etc). Medical artifacts
+(organs, clinically significant findings) are linked to their corresponding UMLS
+terms stored in a separate directory.
 """
 
 from glob import glob
@@ -7,7 +11,7 @@ import json
 import os
 import os.path as osp
 
-from data import medgeese_v0_utils as utils
+from data import medgeese_v1_utils as m_utils
 from joblib import delayed
 from joblib import Parallel
 from lightning import LightningDataModule
@@ -62,6 +66,7 @@ class MedGeeseDataModule(LightningDataModule):
             tokenization.
         debug (bool): Whether to run in debug mode. In debug mode, only a subset
             of the dataset (first 25 rows) will be loaded. Default is False.
+            Currently not implemented, so will raise an error if True.
     """
 
     # Datasets are loaded in lazily during "setup" to assist with DDP
@@ -90,6 +95,12 @@ class MedGeeseDataModule(LightningDataModule):
         assert (
             sum(train_val_test_split) == 1.0
         ), f"Train/val/test split must sum to 1.0. Got {train_val_test_split=}"
+
+        if debug:
+            raise Exception(
+                "Feature not implemented. Please switch debug mode to False."
+            )
+
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
@@ -102,7 +113,8 @@ class MedGeeseDataModule(LightningDataModule):
         memory are not replicated across gpus. This is useful for downloading.
         """
 
-        data_dir = self.hparams.data_dir
+        data_dir = os.path.join(self.hparams.data_dir, "v1")
+
         tensor_dir = self.hparams.tensor_dir
         image_dir = self.hparams.image_dir
 
@@ -135,7 +147,8 @@ class MedGeeseDataModule(LightningDataModule):
         )
 
         # get umls master dict:
-        with open(data_dir + "/" + "UMLS_formatted.json") as json_file:
+        umls_path = data_dir
+        with open(umls_path + "/" + "UMLS_formatted.json") as json_file:
             umls_terms = json.load(json_file)
 
         # Tokenize the UMLS terms
@@ -159,51 +172,35 @@ class MedGeeseDataModule(LightningDataModule):
             values["desc"] = tokenized
             values["idx"] = torch.tensor(values["idx"])
 
-        calc_mass_datasets = [
-            "labels_calc_mammograms.csv",
-            "labels_mass_mammograms.csv",
-            "labels_calc_mammograms_test.csv",
-            "labels_mass_mammograms_test.csv",
-        ]
-        calc_mass_dataframes = [data_dir + "/" + x for x in calc_mass_datasets]
+        master_files = []
+        folders = []
 
-        calc_mass_dataframe = utils.process_calc_mass_dataframes(
-            calc_mass_dataframes
-        )
+        # TODO(carbonkat): implement logic to isolate multi-concept
+        # masks and split into single-concept masks. This may require
+        # pulling the original datasets and performing manual preprocessing.
+        # For now, all multi-concept datasets have been removed from the
+        # v1 dataset directory.
+        img_mask_path = os.path.join(data_dir, 'masks')
+        for root, _, files in os.walk(img_mask_path):
+            for file in files:
+                if file.endswith(".npz"):
+                    folders.append(os.path.basename(root))
+                    master_files.append(os.path.join(root, file))
 
-        duke_dataframe = pd.read_csv(
-            data_dir + "/duke_breast_cancer_annotations.csv"
-        )
-        duke_dataframe["organ"] = "Breast"
-        # All examples in the duke dataset are breast tumor masses
-        duke_dataframe["abnormality_type"] = "Breast Tumor Mass"
-
-        liver_dataframe = utils.process_liver_dataset(
-            data_dir + "/liver_dataset_fixed_trimmed.csv"
-        )
-
-        datasets = [calc_mass_dataframe, duke_dataframe, liver_dataframe]
-        # datasets = [duke_dataframe]
-        if self.hparams.debug:
-            logger.warning(
-                "Running in debug mode. Only loading first 25 rows of"
-                "each dataset."
-            )
-            datasets = [x.head(25) for x in datasets]
-        mega = pd.concat(datasets)
-
-        # heres where the modifications begin
-        mega["organ"] = mega["organ"].fillna("Breast")
-
-        # just take the columns we need. if we want to keep all of them then
-        # skip this part
-        mega = mega[["image", "mask", "organ", "abnormality_type"]]
+        mega = pd.DataFrame({"File": master_files, "Dataset": folders})
 
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
 
+        # A dictionary to assist with mapping UMLS terms to dataset instances.
+        # Mapping is performed on a per-dataset basis to make adding new datasets
+        # easier.
+        with open(umls_path + "/" + "dataset_directory.json") as json_file:
+            term_mapping = json.load(json_file)
+
         os.makedirs(tensor_dir, exist_ok=True)
 
+        # Function for resizing and processing masks to convert them into tensors.
         def process(row):
             if (
                 os.path.exists(tensor_dir + "/" + str(row.index) + "-0.pt")
@@ -211,114 +208,116 @@ class MedGeeseDataModule(LightningDataModule):
             ):
                 return
 
-            image_path = image_dir + "/" + str(row.image)
-            mask_path = image_dir + "/" + str(row.mask)
+            index = str(row.index)
+            dataset = row.Dataset
+            packed_data = np.load(row.File)
+            img = packed_data["imgs"]
+            mask = packed_data["gts"]
 
-            if not (os.path.exists(image_path) and os.path.exists(mask_path)):
-                print("MISSING FILE: ", image_path, mask_path)
+            if len(np.unique(mask)) == 1:
                 return
 
-            is_breast = row.organ == "Breast"
+            # TODO(kathryncarbone): add test to make sure the mask and
+            # image shape are the same
 
-            try:
-                img = (
-                    Image.open(image_path)
-                    if is_breast
-                    else Image.fromarray(np.load(image_path))
-                )
-            except Exception as e:
-                print("Error on image file when reading: " + image_path)
-                print(e)
-                return
-
-            mask = (
-                Image.open(mask_path)
-                if is_breast
-                else Image.fromarray(np.load(mask_path))
-            )
-            try:
-                img = img.convert("RGB").resize((224, 224), Image.LANCZOS)
-
-                mask = np.array(
-                    mask.convert("RGB").resize((224, 224), Image.LANCZOS)
-                )
-            except Exception as e:
-                print(
-                    f"Error on file when resizing: {image_path} or {mask_path}"
-                )
-                print(e)
-                return
-
-            # separate masks into submasks
-            # generate label to accompany each mask
-            # get one for organ, one for abnormality, one for background
-            masks = []
-            umls_labels = []
-            if is_breast:
-                # we already have the tumor seg mask so just need breast +
-                # background
-                breast = np.array(img)
-                breast[breast > 0] = 255
-                background = np.copy(breast)
-                # invert 0s and 255s
-                background ^= 255
-                masks = [
-                    Image.fromarray(background),
-                    Image.fromarray(breast),
-                    Image.fromarray(mask),
-                ]
-                umls_labels.append(umls_terms["Background"])
-                umls_labels.append(umls_terms["Breast"])
-                label = row.abnormality_type
-                if label == "Breast Tumor Calc":
-                    umls_labels.append(umls_terms["Calcinosis"])
-                elif label == "Breast Tumor Mass":
-                    umls_labels.append(umls_terms["Mass in breast"])
-                else:
-                    raise Exception("Label not recognized", label)
+            if len(img.shape) > 2 and img.shape[2] != 3:
+                # Make sure that 3D volumes have the same shape between images and
+                # masks. If not, then there is no 1-1 matching between image and
+                # mask slices.
+                assert (
+                    img.shape == mask.shape
+                ), f"3D volume shapes do not match. Got (image) \
+                    {img.shape=} and (mask) {mask.shape=}."
+                # This converts 3D volumes into 2D slices, with each image slice
+                # corresponding to a mask slice
+                imgs, masks = m_utils.extract_2d_masks(img, mask)
             else:
-                mask_arrays = [
-                    np.copy(mask) for _ in range(len(np.unique(mask)))
-                ]
-                # make first mask only background -> we can def do this better
-                # but just wanna make sure we get functionality 1st
-                # Note: for background the white pixels will be the background
-                # pixels, black are non-background
-                # bground 1st, then liver, then tumor
+                # It is possible for images to be RGB and masks to
+                # be greyscale/2D arrays. To check shape agreement,
+                #only check the first and second shapes
+                assert (
+                    img.shape[0] == mask.shape[0] and
+                    img.shape[1] == mask.shape[1]
+                ), f"Image and mask shapes do not match. Got (image) \
+                    {img.shape=} and (mask) {mask.shape=}."
+                imgs = [img]
+                masks = [mask]
 
-                possible_values = [
-                    "Background",
-                    "Liver",
-                    "Malignant neoplasm of liver",
-                ]
-                for mask_kind, kind in zip(mask_arrays, np.unique(mask)):
-                    mask_kind[mask_kind == kind] = 255
-                    mask_kind[mask_kind != 255] = 0
-                    mask_kind = Image.fromarray(mask_kind)
-                    umls_labels.append(
-                        umls_terms[possible_values[int(kind)]]
-                    )  # 0 is background, 1 is liver, 2 is tumor
-                    masks.append(mask_kind)
+            # For multi-concept datasets, split up masks so that each submask
+            # only contains the segmentation labels of a single concept.
+            imgs, masks = m_utils.multi_mask_processing(imgs, masks, dataset)
 
-            for i, (mask, label) in enumerate(zip(masks, umls_labels)):
-                index = str(row.index)
-                y = label["idx"]
-                candidate_text = label["desc"]
+            potential_terms = term_mapping[dataset]
+            # Grabbing UMLS terms and standardizing list length between
+            # images, masks, and terms.
+            if len(potential_terms) == 1:
+                # If this file is from a one-concept dataset, no need
+                # for additional parsing. The list of candidate terms
+                # must still be extended to the length of the image list
+                # to account for 3D volumes, though.
+                candidate_terms = [umls_terms[potential_terms[0]]] * len(imgs)
 
-                if np.max(np.array(mask)) == 0:
-                    print("skipping empty mask")
-                    continue
-
-                # TODO(liamhebert): Ensure that files are saved in a somewhat
-                # standardized way to match the rest of the datasets. For
-                # instance, datasets in v1 are saved as npz files with
-                # dictionaries, rather than a tuple.
-                torch.save(
-                    (img, mask, y, candidate_text, row.organ),
-                    (f"{tensor_dir}/{index}-{str(i)}.pt"),
+            elif np.max(masks[0]) == 255:
+                # Extract appropriate concept from dataset files where
+                # the correct concept is embedded in the file name.
+                # In this case, masks are already standardized but the
+                # length of the potential terms is greater than 1. This
+                # is different from multi-concept datasets, where pixel
+                # values represent different classes and are thus not
+                # normalized.
+                candidate_terms = [
+                    umls_terms[
+                        m_utils.parse_concept_from_file_name(
+                            dataset, row.File, potential_terms
+                        )
+                    ]
+                ] * len(imgs)
+                if candidate_terms[0] is None:
+                    return
+            else:
+                # Otherwise, match appropriate term to mask label for all masks.
+                candidate_mini_terms, masks = m_utils.match_term_mask(
+                    masks, imgs, potential_terms
                 )
+                candidate_terms = [
+                    umls_terms[term] for term in candidate_mini_terms
+                ]
+
+            for i, (img, mask, term) in enumerate(
+                zip(imgs, masks, candidate_terms)
+            ):
+
+                y = term["idx"]
+                candidate_text = term["desc"]
+                try:
+
+                    img = (
+                        Image.fromarray(img)
+                        .convert("RGB")
+                        .resize((224, 224), Image.LANCZOS)
+                    )
+                    mask = (
+                        Image.fromarray(mask)
+                        .convert("RGB")
+                        .resize((224, 224), Image.LANCZOS)
+                    )
+
+                    # TODO(liamhebert): Ensure that files are saved in a somewhat
+                    # standardized way to match the rest of the datasets. For
+                    # instance, datasets in v1 are saved as npz files with
+                    # dictionaries, rather than a tuple.
+                    torch.save(
+                        (img, mask, y, candidate_text),
+                        (f"{tensor_dir}/{index}-{i}.pt"),
+                    )
+
+                except Exception as e:
+                    print(f"Error on file when resizing: {row.File}")
+                    print(img.shape, mask.shape)
+                    print(e)
 
         logger.info("pre-tokenizing data....")
+
         Parallel(n_jobs=-1, backend="threading")(
             delayed(process)(row)
             for row in tqdm(mega.itertuples(index=False), total=len(mega))
@@ -376,18 +375,21 @@ class MedGeeseDataModule(LightningDataModule):
             self._train_dataset = MedGeeseDataset(
                 items=train_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
+                is_testing=False,
             )
         if self._val_dataset is None:
             # make validation dataset
             self._val_dataset = MedGeeseDataset(
                 items=val_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
+                is_testing=False,
             )
         if self._test_dataset is None:
             # Make test dataset
             self._test_dataset = MedGeeseDataset(
                 items=test_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
+                is_testing=True,
             )
 
     def train_dataloader(self) -> DataLoader:
@@ -436,9 +438,10 @@ class MedGeeseDataset(Dataset):
         use.
     """
 
-    def __init__(self, items: list[str], model_path: str):
+    def __init__(self, items: list[str], model_path: str, is_testing: bool):
         # assume our dataset contains image path, segmentation mask path, label
         self.items = items
+        self.is_testing = is_testing
         self.safe_transforms = v2.Compose(
             [
                 v2.PILToTensor(),
@@ -463,23 +466,23 @@ class MedGeeseDataset(Dataset):
             A dictionary mapping keys to torch tensors. It is expected that the
             tensors have a shape of (batch_size, ...).
         """
-        (img, mask, label, candidate_text, organ) = torch.load(self.items[idx])
+        (img, mask, label, candidate_text) = torch.load(self.items[idx])
         assert isinstance(img, Image.Image), f"{type(img)=}"
         assert isinstance(mask, Image.Image), f"{type(mask)=}"
         assert isinstance(label, torch.Tensor), f"{type(label)=}"
         assert isinstance(candidate_text, dict), f"{type(candidate_text)=}"
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
-        assert isinstance(organ, str), f"{type(organ)=}"
 
         mask = tv.Mask(mask)
         img = tv.Image(img)
         if torch.max(mask) == 0:
             raise Exception("Empty mask pre")
 
-        img, mask = self.safe_transforms(img, mask)
-        try_img, try_mask = self.danger_transforms(img, mask)
-        if torch.max(try_mask) != 0:
-            img, mask = try_img, try_mask
+        if not self.is_testing:
+            img, mask = self.safe_transforms(img, mask)
+            try_img, try_mask = self.danger_transforms(img, mask)
+            if torch.max(try_mask) != 0:
+                img, mask = try_img, try_mask
 
         # This is where we tokenize the images
         # Because we do the random transforms as part of the __getitem__ method,
