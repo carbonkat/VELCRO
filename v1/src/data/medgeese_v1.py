@@ -12,8 +12,6 @@ import os
 import os.path as osp
 
 from data import medgeese_v1_utils as m_utils
-
-# from data import medgeese_v0_utils as utils
 from joblib import delayed
 from joblib import Parallel
 from lightning import LightningDataModule
@@ -115,8 +113,8 @@ class MedGeeseDataModule(LightningDataModule):
         memory are not replicated across gpus. This is useful for downloading.
         """
 
-        data_dir = os.path.join(self.hparams.data_dir, "v1", "masks")
-        print(data_dir)
+        data_dir = os.path.join(self.hparams.data_dir, "v1")
+
         tensor_dir = self.hparams.tensor_dir
         image_dir = self.hparams.image_dir
 
@@ -149,7 +147,7 @@ class MedGeeseDataModule(LightningDataModule):
         )
 
         # get umls master dict:
-        umls_path = os.path.join(self.hparams.data_dir, "v1")
+        umls_path = data_dir
         with open(umls_path + "/" + "UMLS_formatted.json") as json_file:
             umls_terms = json.load(json_file)
 
@@ -182,7 +180,8 @@ class MedGeeseDataModule(LightningDataModule):
         # pulling the original datasets and performing manual preprocessing.
         # For now, all multi-concept datasets have been removed from the
         # v1 dataset directory.
-        for root, _, files in os.walk(data_dir):
+        img_mask_path = os.path.join(data_dir, 'masks')
+        for root, _, files in os.walk(img_mask_path):
             for file in files:
                 if file.endswith(".npz"):
                     folders.append(os.path.basename(root))
@@ -233,6 +232,14 @@ class MedGeeseDataModule(LightningDataModule):
                 # corresponding to a mask slice
                 imgs, masks = m_utils.extract_2d_masks(img, mask)
             else:
+                # It is possible for images to be RGB and masks to
+                # be greyscale/2D arrays. To check shape agreement,
+                #only check the first and second shapes
+                assert (
+                    img.shape[0] == mask.shape[0] and
+                    img.shape[1] == mask.shape[1]
+                ), f"Image and mask shapes do not match. Got (image) \
+                    {img.shape=} and (mask) {mask.shape=}."
                 imgs = [img]
                 masks = [mask]
 
@@ -253,7 +260,11 @@ class MedGeeseDataModule(LightningDataModule):
             elif np.max(masks[0]) == 255:
                 # Extract appropriate concept from dataset files where
                 # the correct concept is embedded in the file name.
-                # Here, len(potential_terms) > 1 but masks already standardized.
+                # In this case, masks are already standardized but the
+                # length of the potential terms is greater than 1. This
+                # is different from multi-concept datasets, where pixel
+                # values represent different classes and are thus not
+                # normalized.
                 candidate_terms = [
                     umls_terms[
                         m_utils.parse_concept_from_file_name(
