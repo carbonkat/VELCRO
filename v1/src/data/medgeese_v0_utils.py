@@ -1,6 +1,6 @@
 """
 Various utility functions for processing the specific datasets that make up the
-MedGeese dataset.
+MedGeese v0 dataset.
 """
 
 import pandas as pd

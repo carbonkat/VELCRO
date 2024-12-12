@@ -25,13 +25,6 @@ repos:
       - id: black
         args: [--line-length=80]
 
-  # python import sorting
-  - repo: https://github.com/PyCQA/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-        args: ["--profile", "google", "--filter-files", "--line-length", "80"]
-
   # python docstring formatting
   - repo: https://github.com/keewis/blackdoc
     rev: v0.3.9

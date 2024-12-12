@@ -1,5 +1,5 @@
 """
-Dataset classes and utilities.
+Dataset classes and utilities for the v0 dataset.
 """
 
 from glob import glob
@@ -31,8 +31,7 @@ tqdm.pandas()
 logger = RankedLogger(__name__)
 
 # TODO(liamhebert): Throughout this code, we only tokenize the images in the
-# "get_item" method and we do not tokenize the text at all. We should instead
-# tokenize ahead of time.
+# "get_item" method. We should instead tokenize ahead of time.
 
 
 class MedGeeseDataModule(LightningDataModule):
