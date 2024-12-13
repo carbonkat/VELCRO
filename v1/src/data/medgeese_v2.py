@@ -32,7 +32,6 @@ from transformers import BatchEncoding
 from utils import RankedLogger
 from skimage.measure import regionprops
 from torch.nn.utils.rnn import pad_sequence
-from collections import defaultdict
 
 tqdm.pandas()
 
@@ -41,27 +40,39 @@ logger = RankedLogger(__name__)
 # TODO(liamhebert): Throughout this code, we only tokenize the images in the
 # "get_item" method. We should instead tokenize ahead of time.
 
+
 def collate_fn(data):
-        new_candidate_input = dict()
-        for key in data[0]['x']['candidate_input']:
-            new_candidate_input[key] = torch.stack([d['x']['candidate_input'][key] for d in data], dim=0)
+    new_candidate_input = dict()
+    for key in data[0]["x"]["candidate_input"]:
+        new_candidate_input[key] = torch.stack(
+            [d["x"]["candidate_input"][key] for d in data], dim=0
+        )
 
-        new_image_input = dict()
-        for key in data[0]['x']['image_input']:
-            new_image_input[key] = torch.squeeze(torch.stack([d['x']['image_input'][key] for d in data], dim=0))
+    new_image_input = dict()
+    for key in data[0]["x"]["image_input"]:
+        new_image_input[key] = torch.squeeze(
+            torch.stack([d["x"]["image_input"][key] for d in data], dim=0)
+        )
 
-        bounding_boxes = [torch.permute(d['x']['bounding_boxes'], (1, 2, 0)) for d in data]
-        bounding_boxes = torch.squeeze(pad_sequence(bounding_boxes, batch_first=True))
-        class_indices = torch.stack(([d['y']['class_indices'] for d in data]), dim=0)
+    bounding_boxes = [
+        torch.permute(d["x"]["bounding_boxes"], (1, 2, 0)) for d in data
+    ]
+    bounding_boxes = torch.squeeze(
+        pad_sequence(bounding_boxes, batch_first=True)
+    )
+    class_indices = torch.stack(
+        ([d["y"]["class_indices"] for d in data]), dim=0
+    )
 
-        return {
-            "x": {
-                "candidate_input": new_candidate_input,
-                "image_input": new_image_input,
-                "bounding_boxes": bounding_boxes
-            },
-            "y": {"class_indices": class_indices},
-        }
+    return {
+        "x": {
+            "candidate_input": new_candidate_input,
+            "image_input": new_image_input,
+            "bounding_boxes": bounding_boxes,
+        },
+        "y": {"class_indices": class_indices},
+    }
+
 
 class MedGeeseDataModule(LightningDataModule):
     """DataModule containing processed train/val/test dataloaders for our
@@ -206,7 +217,7 @@ class MedGeeseDataModule(LightningDataModule):
         # pulling the original datasets and performing manual preprocessing.
         # For now, all multi-concept datasets have been removed from the
         # v1 dataset directory.
-        img_mask_path = os.path.join(data_dir, 'ground_truths')
+        img_mask_path = os.path.join(data_dir, "ground_truths")
         for root, _, files in os.walk(img_mask_path):
             for file in files:
                 if file.endswith(".npz"):
@@ -262,10 +273,10 @@ class MedGeeseDataModule(LightningDataModule):
             else:
                 # It is possible for images to be RGB and masks to
                 # be greyscale/2D arrays. To check shape agreement,
-                #only check the first and second shapes
+                # only check the first and second shapes
                 assert (
-                    img.shape[0] == mask.shape[0] and
-                    img.shape[1] == mask.shape[1]
+                    img.shape[0] == mask.shape[0]
+                    and img.shape[1] == mask.shape[1]
                 ), f"Image and mask shapes do not match. Got (image) \
                     {img.shape=} and (mask) {mask.shape=}."
                 imgs = [img]
@@ -314,20 +325,18 @@ class MedGeeseDataModule(LightningDataModule):
             for i, (img, mask, term) in enumerate(
                 zip(imgs, masks, candidate_terms)
             ):
-                
+
                 y = term["idx"]
                 candidate_text = term["desc"]
                 try:
 
                     img = (
-                        Image.fromarray(img)
-                        .convert("RGB")
-                    #    .resize((1024, 1024), Image.LANCZOS)
+                        Image.fromarray(img).convert("RGB")
+                        #    .resize((1024, 1024), Image.LANCZOS)
                     )
                     mask = (
-                        Image.fromarray(mask)
-                        .convert("RGB")
-                    #    .resize((1024, 1024), Image.LANCZOS)
+                        Image.fromarray(mask).convert("RGB")
+                        #    .resize((1024, 1024), Image.LANCZOS)
                     )
 
                     x_scale = 1024 / mask.size[0]
@@ -343,11 +352,10 @@ class MedGeeseDataModule(LightningDataModule):
                         xmax = int(np.round(bbox[3] * x_scale))
                         ymax = int(np.round(bbox[2] * y_scale))
                         reordered_boxes.append([x1, y1, xmax, ymax])
-                        #reordered_boxes.append([bbox[1], bbox[0], bbox[3], bbox[2]])
+
                     img = img.resize((1024, 1024), Image.LANCZOS)
                     mask = mask.resize((1024, 1024), Image.LANCZOS)
-                    print(img.size, mask.size)
-                    #print("number of bounding boxes:", len(reordered_boxes))
+                    # print("number of bounding boxes:", len(reordered_boxes))
                     # TODO(liamhebert): Ensure that files are saved in a somewhat
                     # standardized way to match the rest of the datasets. For
                     # instance, datasets in v1 are saved as npz files with
@@ -448,7 +456,7 @@ class MedGeeseDataModule(LightningDataModule):
             batch_size=self.hparams.train_batch_size,  # type: ignore
             shuffle=True,
             num_workers=self.hparams.num_workers,  # type: ignore
-            collate_fn=collate_fn, # type: ignore
+            collate_fn=collate_fn,  # type: ignore
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -461,7 +469,7 @@ class MedGeeseDataModule(LightningDataModule):
             batch_size=self.hparams.train_batch_size,  # type: ignore
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
-            collate_fn=collate_fn # type: ignore
+            collate_fn=collate_fn,  # type: ignore
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -499,9 +507,6 @@ class MedGeeseDataset(Dataset):
             ]
         )
         self.danger_transforms = v2.Compose([v2.RandomRotation(90)])
-        #self.processor = segment_anything.sam_model_registry['default'](checkpoint=
-        #    f'/home/carbok/MedGeese/v1/src/segment_anything/{model_path}')
-        
         self.processor = AutoProcessor.from_pretrained(
             model_path, local_files_only=False
         )
@@ -529,7 +534,7 @@ class MedGeeseDataset(Dataset):
         if torch.max(mask) == 0:
             raise Exception("Empty mask pre")
 
-        #TODO(carbonkat): if we do transforms, we need to also change the bounding
+        # TODO(carbonkat): if we do transforms, we must also change the bounding
         # boxes to match the new orientation. Alternately, we could just generate
         # the bounding boxes here, though this might be more expensive
 
@@ -542,18 +547,16 @@ class MedGeeseDataset(Dataset):
         # This is where we tokenize the images
         # Because we do the random transforms as part of the __getitem__ method,
         # we need to tokenize the images here as well (and not ahead of time).
-        #img = self.processor.preprocess(img)
+        # img = self.processor.preprocess(img)
         inputs = self.processor(
             images=img,
-            input_boxes = [bboxes],
+            input_boxes=[bboxes],
             return_tensors="pt",
             do_normalize=True,
             do_rescale=True,
-            #do_center_crop=False,
+            # do_center_crop=False,
             do_resize=True,
         )
-
-        print(inputs)
 
         mask = mask.float()
         if torch.max(mask) == 0:
@@ -562,7 +565,7 @@ class MedGeeseDataset(Dataset):
             "x": {
                 "candidate_input": candidate_text,
                 "image_input": {"mask": mask, "img": inputs.pixel_values},
-                "bounding_boxes": inputs.input_boxes
+                "bounding_boxes": inputs.input_boxes,
             },
             "y": {"class_indices": label},
         }
