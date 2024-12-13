@@ -50,11 +50,10 @@ class SAMMedGeese(TwoTowerEncoder):
 
         self.text_model
         self.vision_model
-
+        
         text_embedding_dim = self.text_model.config.hidden_size
         prompt_embedding_dim = self.vision_model.prompt_encoder.embed_dim
         self.patch_size = self.vision_model.image_encoder.patch_embed.proj.kernel_size[0]
-
         self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
         self.vision_projection = nn.Linear(prompt_embedding_dim, projection_dim)
 
@@ -83,7 +82,8 @@ class SAMMedGeese(TwoTowerEncoder):
         )
 
     def forward(
-        self, candidate_input: dict[str, Tensor], image_input: dict[str, Tensor]
+        self, candidate_input: dict[str, Tensor], image_input: dict[str, Tensor],
+        bounding_boxes: Tensor
     ) -> tuple[Tensor, Tensor]:
         """Generates the required embeddings for the text and image inputs.
 
@@ -102,7 +102,9 @@ class SAMMedGeese(TwoTowerEncoder):
         # That way it can be flexible in case other models have different input
         # types.
         img = image_input["img"]
-
+        if len(bounding_boxes.shape) == 2:
+                bounding_boxes = bounding_boxes[:, None, :]  # (B, 1, 4)
+        print(bounding_boxes.shape)
         # TOWER 1: 
         # Step 1: Generate the prompt embeddings for the image
         # Step 2: Generate the SAM masks
@@ -111,13 +113,25 @@ class SAMMedGeese(TwoTowerEncoder):
         #TODO(carbonkat): need to ensure that the ROIs are generated using the
         # SAM-generated masks, and that the gold mask is used to calculate the
         # IOU portion of the loss
-        img_embed = self.vision_model.vision_encoder(img)
-        #sparse_embeddings, dense_embeddings = self.vision_model.prompt_encoder(
-        #  points=None,
-        #  boxes=box_torch,
-        #  masks=None,
-        #)
+        img_embed = self.vision_model.image_encoder(img)
+        sparse_embeddings, dense_embeddings = self.vision_model.prompt_encoder(
+        points=None,
+        boxes=bounding_boxes,
+        masks=None,
+        )
         
+        #TODO(carbonkat): get last hidden layer of decoder
+        low_res_masks, _ = self.vision_model.mask_decoder(
+            image_embeddings=img_embed,
+            image_pe=self.vision_model.prompt_encoder.get_dense_pe(),
+            sparse_prompt_embeddings=sparse_embeddings,
+            dense_prompt_embeddings=dense_embeddings,
+            multimask_output=False,
+        )
+        
+        #TODO(carbonkat): make the resizing dynamic!
+        upscaled_masks = self.vision_model.postprocess_masks(low_res_masks, (1024, 1024), (1024, 1024))
+        print(upscaled_masks.size())
         # TOWER 2: 
         # Step 1: Feed text through the custom text prompt embedding module
         # Step 2: Feed images through the vision model
