@@ -164,7 +164,7 @@ class SAMMedGeese(TwoTowerEncoder):
         # This converts the low resolution masks to the original
         # image resolution. Needed for IOU loss calculation
         upscaled_masks = self.vision_model.postprocess_masks(
-            low_res_masks, (1024, 1024), (1024, 1024)
+            low_res_masks, (1024, 1024), (224, 224)
         )
 
         # Take the upscaled masks and apply convolution to project
