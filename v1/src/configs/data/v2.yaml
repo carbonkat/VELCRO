@@ -13,8 +13,7 @@ num_workers: 8
 force_remake: False # Set from commandline "data.force_remake=True"
 pin_memory: True
 
-image_model_path: ${modality_encoder.vision_model_name}
+image_model_path: "facebook/sam-vit-huge"
 text_model_path: ${modality_encoder.text_model_name}
-tokenizer_path: "facebook/sam-vit-huge"
 
 debug: False

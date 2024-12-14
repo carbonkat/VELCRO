@@ -1,5 +1,5 @@
 """
-Code related to Medgeese v0.
+Code related to Medgeese v2.
 """
 
 from model import TwoTowerEncoder
@@ -12,7 +12,8 @@ from segment_anything import sam_model_registry
 
 class SAMMedGeese(TwoTowerEncoder):
     """
-    Model that matches patch embeddings to text embeddings using SAM.
+    Model that generates masks and matches patch embeddings
+    to text embeddings using SAM.
     """
 
     text_model: AutoModel
@@ -23,7 +24,6 @@ class SAMMedGeese(TwoTowerEncoder):
         self,
         text_model_path: str = "bert-base-uncased",
         vision_model_path: str = "sam_vit_h_4b8939.pth",
-        is_clip: bool = True,
         projection_dim: int = 512,
     ):
         """Constructs the model.
@@ -44,6 +44,7 @@ class SAMMedGeese(TwoTowerEncoder):
         """
         super().__init__()
         self.text_model = AutoModel.from_pretrained(text_model_path)
+        # TODO (carbonkat): make this path dynamic!
         self.vision_model = sam_model_registry["default"](
             checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/{vision_model_path}"
         )
@@ -100,9 +101,10 @@ class SAMMedGeese(TwoTowerEncoder):
             image_input (dict): Dict of the inputs required for the image tower.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: Returns two tensors, the first
-            representing the candidate embeddings and the second representing the
-            image embeddings.
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Returns three
+            tensors, the first representing the candidate embeddings, the second
+            representing the ROI embeddings, and the third representing the
+            computed SAM mask(s).
         """
         # TODO(liamhebert): Ideally, we should have "img" be a field and we map
         # it to self.vision model (ie: self.vision_model(**image_input["img"]))
@@ -111,13 +113,6 @@ class SAMMedGeese(TwoTowerEncoder):
         img = image_input["img"]
         if len(bounding_boxes.shape) == 2:
             bounding_boxes = bounding_boxes[:, None, :]  # (B, 1, 4)
-        # TOWER 1:
-        # Step 1: Generate the prompt embeddings for the image
-        # Step 2: Generate the SAM masks
-        # Step 3: Generate the ROI embeddings using same strategy as before
-        # TODO(carbonkat): need to ensure that the ROIs are generated using the
-        # SAM-generated masks, and that the gold mask is used to calculate the
-        # IOU portion of the loss
 
         # The SAM image encoder includes a neck, which is used
         # to assist with mask decoding. For the embedding alignment portion,
@@ -137,6 +132,22 @@ class SAMMedGeese(TwoTowerEncoder):
             masks=None,
         )
 
+        # This gets the [CLS] token
+        candidate_embed = self.text_model(**candidate_input).pooler_output
+        # In order to integrate text with the mask decoder, we need
+        # the embedding to be in the same latent space. To accomplish
+        # this, first project, then expand the tensor to be 3D in order
+        # to integrate it with the sparse/dense embeddings. This needs
+        # to be done in order for the custom attention mechanism to
+        # integrate text information. The text can be either expanded
+        # to be sparse or dense. For now, I am making it sparse since this
+        # requires less shape manipulation, but eventually we should test
+        # both.
+        candidate_embed = self.text_projection(candidate_embed)
+        candidate_embed = candidate_embed.unsqueeze(1).expand(
+            -1, sparse_embeddings.shape[1], -1
+        )
+
         # This generates low resolution masks by decoding the
         # image embedding, sparse prompts, and dense prompts
         # into masks. Right now, I only generate one mask per image.
@@ -145,6 +156,7 @@ class SAMMedGeese(TwoTowerEncoder):
             image_pe=self.vision_model.prompt_encoder.get_dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
+            text_embeddings=candidate_embed,
             multimask_output=False,
         )
 
@@ -164,11 +176,9 @@ class SAMMedGeese(TwoTowerEncoder):
 
         # Project into desired shared image-text space.
         projected_img_embed = self.vision_projection(img_embed)
-        print(projected_img_embed.size(), masks.size())
 
         mask_embeds = torch.einsum("bij, bi -> bj", projected_img_embed, masks)
         mask_embeds = mask_embeds.squeeze(-1)
-        print(mask_embeds.size())
         # Since the dot product above sums the tokens that make up the mask, we
         # now have to normalize the mask embeddings by the number of tokens that
         # make up the mask (ie: taking the mean). This is because some masks can
@@ -180,12 +190,8 @@ class SAMMedGeese(TwoTowerEncoder):
         # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
 
-        # TOWER 2:
-        # Step 1: Feed text through the custom text prompt embedding module
-        # Step 2: Feed images through the vision model
-        # Step 3: Combine into concept embedding
-        # Step 4: Project concept embedding into shared space -> This is the
-        #   candidate embedding
-
-        # TODO(carbonkat): fill out the architecture for each tower.
+        # TODO(carbonkat): figure out returns for loss. This should be
+        # the masks (for IOU loss computation), ROI embeddings, and
+        # text embeddings. The envisioned combined loss will be the sum of the
+        # IOU and contrastive losses.
         return

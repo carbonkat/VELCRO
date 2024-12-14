@@ -42,6 +42,21 @@ logger = RankedLogger(__name__)
 
 
 def collate_fn(data):
+    """
+    Custom collate function to pad bounding boxes to be standard length.
+    Right now I pad by adding zero-ed out boxes, but SAM also has a
+    special token which is supposed to be a dummy point token which
+    might be better for making sure it doesn't pay attention to the
+    padded boxes.
+
+    Arguments:
+        data (list[dict[str, torch.Tensor]]): a list of dictionaries
+            representing the datapoints to collate into a batch.
+
+    Returns:
+        dict[str, [torch.Tensor]]: a dictionary with each entry value
+            being a tensor of batched inputs for that key.
+    """
     new_candidate_input = dict()
     for key in data[0]["x"]["candidate_input"]:
         new_candidate_input[key] = torch.stack(
@@ -126,7 +141,6 @@ class MedGeeseDataModule(LightningDataModule):
         pin_memory: bool,
         image_model_path: str,
         text_model_path: str,
-        tokenizer_path: str,
         debug: bool = False,
     ):
         assert (
@@ -224,8 +238,6 @@ class MedGeeseDataModule(LightningDataModule):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
 
-        master_files = master_files[0:25]
-        folders = folders[0:25]
         mega = pd.DataFrame({"File": master_files, "Dataset": folders})
 
         mega["index"] = 1
@@ -255,9 +267,6 @@ class MedGeeseDataModule(LightningDataModule):
 
             if len(np.unique(mask)) == 1:
                 return
-
-            # TODO(kathryncarbone): add test to make sure the mask and
-            # image shape are the same
 
             if len(img.shape) > 2 and img.shape[2] != 3:
                 # Make sure that 3D volumes have the same shape between images and
@@ -330,19 +339,20 @@ class MedGeeseDataModule(LightningDataModule):
                 candidate_text = term["desc"]
                 try:
 
-                    img = (
-                        Image.fromarray(img).convert("RGB")
-                        #    .resize((1024, 1024), Image.LANCZOS)
-                    )
-                    mask = (
-                        Image.fromarray(mask).convert("RGB")
-                        #    .resize((1024, 1024), Image.LANCZOS)
-                    )
+                    img = Image.fromarray(img).convert("RGB")
+                    mask = Image.fromarray(mask).convert("RGB")
 
+                    # Scaling factors for bounding boxes. This is
+                    # needed to reshape them after the image and
+                    # mask are resized to constant dimensions.
                     x_scale = 1024 / mask.size[0]
                     y_scale = 1024 / mask.size[1]
 
                     bboxes = regionprops(np.asarray(mask))
+                    # For some reason, resizing the image before
+                    # generating bounding boxes causes many more
+                    # boxes than expected to be generated, so just
+                    # generate on the original image and then resize.
                     reordered_boxes = []
                     for prop in bboxes:
                         bbox = prop.bbox
@@ -355,7 +365,7 @@ class MedGeeseDataModule(LightningDataModule):
 
                     img = img.resize((1024, 1024), Image.LANCZOS)
                     mask = mask.resize((1024, 1024), Image.LANCZOS)
-                    # print("number of bounding boxes:", len(reordered_boxes))
+
                     # TODO(liamhebert): Ensure that files are saved in a somewhat
                     # standardized way to match the rest of the datasets. For
                     # instance, datasets in v1 are saved as npz files with
@@ -376,7 +386,6 @@ class MedGeeseDataModule(LightningDataModule):
             delayed(process)(row)
             for row in tqdm(mega.itertuples(index=False), total=len(mega))
         )
-        # mega.progress_apply(process, axis=1)
 
     def setup(self, stage: str):
         """Load dataset for training/validation/testing.
@@ -428,21 +437,21 @@ class MedGeeseDataModule(LightningDataModule):
             # make training dataset
             self._train_dataset = MedGeeseDataset(
                 items=train_set,
-                model_path=self.hparams.tokenizer_path,  # type: ignore
+                model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=False,
             )
         if self._val_dataset is None:
             # make validation dataset
             self._val_dataset = MedGeeseDataset(
                 items=val_set,
-                model_path=self.hparams.tokenizer_path,  # type: ignore
+                model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=False,
             )
         if self._test_dataset is None:
             # Make test dataset
             self._test_dataset = MedGeeseDataset(
                 items=test_set,
-                model_path=self.hparams.tokenizer_path,  # type: ignore
+                model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=True,
             )
 
@@ -495,7 +504,8 @@ class MedGeeseDataset(Dataset):
     """
 
     def __init__(self, items: list[str], model_path: str, is_testing: bool):
-        # assume our dataset contains image path, segmentation mask path, label
+        # assume our dataset contains image path, segmentation mask path, label,
+        # bounding boxes corresponding to each distinct segment
         self.items = items
         self.is_testing = is_testing
         self.safe_transforms = v2.Compose(
@@ -537,24 +547,22 @@ class MedGeeseDataset(Dataset):
         # TODO(carbonkat): if we do transforms, we must also change the bounding
         # boxes to match the new orientation. Alternately, we could just generate
         # the bounding boxes here, though this might be more expensive
-
+        """
         if not self.is_testing:
             img, mask = self.safe_transforms(img, mask)
             try_img, try_mask = self.danger_transforms(img, mask)
             if torch.max(try_mask) != 0:
                 img, mask = try_img, try_mask
-
+        """
         # This is where we tokenize the images
         # Because we do the random transforms as part of the __getitem__ method,
         # we need to tokenize the images here as well (and not ahead of time).
-        # img = self.processor.preprocess(img)
         inputs = self.processor(
             images=img,
             input_boxes=[bboxes],
             return_tensors="pt",
             do_normalize=True,
             do_rescale=True,
-            # do_center_crop=False,
             do_resize=True,
         )
 
