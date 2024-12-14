@@ -345,8 +345,8 @@ class MedGeeseDataModule(LightningDataModule):
                     # Scaling factors for bounding boxes. This is
                     # needed to reshape them after the image and
                     # mask are resized to constant dimensions.
-                    x_scale = 1024 / mask.size[0]
-                    y_scale = 1024 / mask.size[1]
+                    x_scale = 224 / mask.size[0]
+                    y_scale = 224 / mask.size[1]
 
                     bboxes = regionprops(np.asarray(mask))
                     # For some reason, resizing the image before
@@ -363,8 +363,8 @@ class MedGeeseDataModule(LightningDataModule):
                         ymax = int(np.round(bbox[2] * y_scale))
                         reordered_boxes.append([x1, y1, xmax, ymax])
 
-                    img = img.resize((1024, 1024), Image.LANCZOS)
-                    mask = mask.resize((1024, 1024), Image.LANCZOS)
+                    img = img.resize((224, 224), Image.LANCZOS)
+                    mask = mask.resize((224, 224), Image.LANCZOS)
 
                     # TODO(liamhebert): Ensure that files are saved in a somewhat
                     # standardized way to match the rest of the datasets. For
