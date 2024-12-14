@@ -84,6 +84,7 @@ class MaskDecoder(nn.Module):
         image_pe: torch.Tensor,
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
+        text_embeddings: torch.Tensor,
         multimask_output: bool,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -94,6 +95,7 @@ class MaskDecoder(nn.Module):
           image_pe (torch.Tensor): positional encoding with the shape of image_embeddings
           sparse_prompt_embeddings (torch.Tensor): the embeddings of the points and boxes
           dense_prompt_embeddings (torch.Tensor): the embeddings of the mask inputs
+          text_embeddings (torch.Tensor): the embeddings of the text [CLS] tokens
           multimask_output (bool): Whether to return multiple masks or a single
             mask.
 
@@ -106,6 +108,7 @@ class MaskDecoder(nn.Module):
             image_pe=image_pe,
             sparse_prompt_embeddings=sparse_prompt_embeddings,
             dense_prompt_embeddings=dense_prompt_embeddings,
+            text_embeddings=text_embeddings,
         )
 
         # Select the correct mask or masks for output
@@ -125,24 +128,29 @@ class MaskDecoder(nn.Module):
         image_pe: torch.Tensor,
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
+        text_embeddings: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Predicts masks. See 'forward' for more details."""
         # Concatenate output tokens
         output_tokens = torch.cat(
             [self.iou_token.weight, self.mask_tokens.weight], dim=0
         )
+        # Get output tokens in desired dimensions
         output_tokens = output_tokens.unsqueeze(0).expand(
             sparse_prompt_embeddings.size(0), -1, -1
         )
-        tokens = torch.cat((output_tokens, sparse_prompt_embeddings), dim=1)
+        tokens = torch.cat(
+            (output_tokens, sparse_prompt_embeddings, text_embeddings), dim=1
+        )
+        # Expand per-image data in batch direction to be per-mask
         if image_embeddings.shape[0] != tokens.shape[0]:
             src = torch.repeat_interleave(
                 image_embeddings, tokens.shape[0], dim=0
             )
         else:
             src = image_embeddings
-        # Expand per-image data in batch direction to be per-mask
-        # src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
+
+        # TODO(carbonkat): treat text as dense prompt embedding?
         src = src + dense_prompt_embeddings
         pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
