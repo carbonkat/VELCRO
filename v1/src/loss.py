@@ -7,6 +7,8 @@ from abc import abstractmethod
 
 import torch
 from torch import nn
+from monai.losses import DiceLoss
+from monai.losses import FocalLoss
 
 
 class Loss(ABC, nn.Module):
@@ -242,3 +244,122 @@ class ContrastiveLoss(Loss):
             torch.nn.functional.cross_entropy(similarity, similarity_matrix),
             preds,
         )
+
+
+class SegmentationLoss(Loss):
+
+    dice_loss: DiceLoss
+    focal_loss: FocalLoss
+
+    def __init__(self, gamma_focal: float = 20.0, gamma_dice: float = 1.0):
+
+        super().__init__()
+        self.dice_loss = DiceLoss(
+            sigmoid=True, squared_pred=True, reduction="mean"
+        )
+        self.focal_loss = FocalLoss(use_softmax=False, reduction="mean")
+        self.gamma_focal = gamma_focal
+        self.gamma_dice = gamma_dice
+
+    def __call__(
+        self,
+        pred_masks: torch.Tensor,
+        gold_masks: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute the segmentation loss. This follows the loss described by
+        the original SAM paper (https://arxiv.org/pdf/2304.02643), where loss
+        is a linear combination of dice and focal loss. For DiceLoss, I follow
+        the parameter settings used by MedSAM
+
+        Args:
+            gamma_focal: the scaling factor for the focal loss. Defaults to 20 per
+                the original SAM paper.
+            gamma_dice: the scaling factor for the dice loss. Defaults to 1 per
+                the original SAM paper.
+
+
+        Returns:
+            The mask segmentation loss.
+        """
+
+        dice = self.dice_loss(pred_masks, gold_masks)
+        focal = self.focal_loss(pred_masks, gold_masks)
+
+        return self.gamma_focal * focal + self.gamma_dice * dice
+
+
+class CombinedLoss(Loss):
+
+    contrastive_loss: ContrastiveLoss
+    segmentation_loss: SegmentationLoss
+
+    def __init__(
+        self,
+        remove_duplicates: bool = True,
+        temperature: float = 0.30,
+        learnable_temperature: bool = False,
+        gamma_focal: float = 20.0,
+        gamma_dice: float = 1.0,
+    ):
+        """Initializes the combined loss, which is just the sum of the
+        contrastive and segmentation losses.
+
+        Args:
+            remove_duplicates (bool, optional): Whether to remove duplicate values
+                from the loss calculation. If you are guaranteed to not have
+                duplicate candidates, then this should be set to False for a
+                speed up. Defaults to True.
+            temperature (float, optional): The temperature to use for the softmax
+                function. A higher value will make the distribution more uniform,
+                while a lower value will make the distribution more peaky.
+                Defaults to 0.30.
+            learnable_temperature (bool, optional): Whether to learn the
+                temperature parameter. The initial value of the temperature will
+                be `temperature`. Defaults to False.
+            gamma_focal (float, optional): The scaling factor for the focal loss
+                computed for segmentation loss. Defaults to 20.
+            gamma_dice (float, optional): The scaling factor for the dice loss
+                computed for segmentation loss. Defaults to 1.
+        """
+
+        super().__init__()
+        self.remove_duplicates = remove_duplicates
+        self.temperature = nn.Parameter(
+            torch.tensor(temperature), requires_grad=learnable_temperature
+        )
+        self.contrastive_loss = ContrastiveLoss(
+            remove_duplicates, temperature, learnable_temperature
+        )
+        self.segmentation_loss = SegmentationLoss(gamma_focal, gamma_dice)
+
+    def __call__(
+        self,
+        roi_embeddings: torch.Tensor,
+        candidate_embeddings: torch.Tensor,
+        predicted_masks: torch.Tensor,
+        gold_masks: torch.Tensor,
+        y_true: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute the cross-entropy loss.
+
+        Args:
+            roi_embeddings: The embeddings of each region of interest, with
+                shape (batch_size * num_rois, embedding_size).
+            candidate_embeddings: The embeddings for each candidate item, with
+                shape (num_candidates, embedding_size) if remove_duplicates is
+                false, (batch_size * num_rois, embedding_size) otherwise.
+            y_true: A dictionary containing the field "class_indices", which is a
+                tensor of shape (batch_size * num_rois) containing the indices of
+                the true class for each roi.
+
+        Returns:
+            The cross-entropy loss value.
+        """
+
+        l1, preds = self.contrastive_loss(
+            roi_embeddings, candidate_embeddings, y_true
+        )
+        if len(predicted_masks.shape) > len(gold_masks.shape):
+            gold_masks = gold_masks.unsqueeze(1)
+        l2 = self.segmentation_loss(predicted_masks, gold_masks)
+        return l1 + l2, preds

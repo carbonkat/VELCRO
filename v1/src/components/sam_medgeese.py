@@ -23,7 +23,7 @@ class SAMMedGeese(TwoTowerEncoder):
     def __init__(
         self,
         text_model_path: str = "bert-base-uncased",
-        vision_model_path: str = "sam_vit_h_4b8939.pth",
+        vision_model_path: str = "sam_vit_b.pth",
         projection_dim: int = 512,
     ):
         """Constructs the model.
@@ -45,7 +45,7 @@ class SAMMedGeese(TwoTowerEncoder):
         super().__init__()
         self.text_model = AutoModel.from_pretrained(text_model_path)
         # TODO (carbonkat): make this path dynamic!
-        self.vision_model = sam_model_registry["default"](
+        self.vision_model = sam_model_registry["vit_b"](
             checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/{vision_model_path}"
         )
         self.vision_layer_norm = nn.Identity()
@@ -99,6 +99,7 @@ class SAMMedGeese(TwoTowerEncoder):
             candidate_input (dict): Dict of the inputs required for the candidate
                 model.
             image_input (dict): Dict of the inputs required for the image tower.
+            bounding_boxes (torch.Tensor): Tensors for bounding boxes.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Returns three
@@ -144,27 +145,34 @@ class SAMMedGeese(TwoTowerEncoder):
         # requires less shape manipulation, but eventually we should test
         # both.
         candidate_embed = self.text_projection(candidate_embed)
-        candidate_embed = candidate_embed.unsqueeze(1).expand(
+        text_decoder_embed = candidate_embed.unsqueeze(1).expand(
             -1, sparse_embeddings.shape[1], -1
         )
 
         # This generates low resolution masks by decoding the
         # image embedding, sparse prompts, and dense prompts
         # into masks. Right now, I only generate one mask per image.
+        # I believe the low_res_masks are logits, which is needed for
+        # loss calculation.
         low_res_masks, _ = self.vision_model.mask_decoder(
             image_embeddings=img_embed,
             image_pe=self.vision_model.prompt_encoder.get_dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
-            text_embeddings=candidate_embed,
+            text_embeddings=text_decoder_embed,
             multimask_output=False,
         )
 
         # TODO(carbonkat): make the resizing dynamic!
         # This converts the low resolution masks to the original
         # image resolution. Needed for IOU loss calculation
+        # NOTE: SAM expects images to be of size 1024x1024,
+        # which is very memory intensive. I would like to
+        # make the images smaller without significantly changing
+        # the architecture, if possible, but this appears quite
+        # difficult to do.
         upscaled_masks = self.vision_model.postprocess_masks(
-            low_res_masks, (1024, 1024), (224, 224)
+            low_res_masks, (1024, 1024), (1024, 1024)
         )
 
         # Take the upscaled masks and apply convolution to project
@@ -184,14 +192,15 @@ class SAMMedGeese(TwoTowerEncoder):
         # make up the mask (ie: taking the mean). This is because some masks can
         # be larger then others.
 
-        # First, we calculating the number of mask tokens per image. This is just
+        # First, we calculate the number of mask tokens per image. This is just
         # done by summing the mask over the last dimension.
         mask_size = masks.sum(dim=-1, keepdim=True)
         # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
 
-        # TODO(carbonkat): figure out returns for loss. This should be
-        # the masks (for IOU loss computation), ROI embeddings, and
-        # text embeddings. The envisioned combined loss will be the sum of the
-        # IOU and contrastive losses.
-        return
+        return (
+            normalized_mask_embeds,
+            candidate_embed,
+            upscaled_masks,
+            image_input["mask"],
+        )
