@@ -1,2 +1,2 @@
-vision_model_name: "sam_vit_h_4b8939.pth"
+vision_model_name: "sam_vit_b.pth"
 text_model_name: "bert-base-uncased"

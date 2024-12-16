@@ -1,0 +1,6 @@
+_target_: loss.CombinedLoss
+remove_duplicates: true
+temperature: 0.50
+learnable_temperature: True
+gamma_focal: 20.0
+gamma_dice: 1.0
