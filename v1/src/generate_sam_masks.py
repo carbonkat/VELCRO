@@ -51,12 +51,13 @@ def main():
 
     # TODO(carbonkat): link this with the datadir parameter set in the paths file
     # in configs (possibly use https://click.palletsprojects.com/en/stable/).
-    data_dir = "/home/carbok/MedGeese/v1/src/data/dataset_files/v1/ground_truths"
-    mask_dir = "/home/carbok/MedGeese/v1/src/data/dataset_files/v1/masks"
+    root_path = "/home/carbok/MedGeese/v1/src/"
+    data_dir = root_path + "data/dataset_files/v1/ground_truths"
+    mask_dir = root_path = "data/dataset_files/v1/masks"
 
     # TODO(carbonkat): make this path dynamic
     sam = sam_model_registry["default"](
-        checkpoint="/home/carbok/MedGeese/v1/src/segment_anything/sam_vit_h_4b8939.pth"
+        checkpoint=root_path + "segment_anything/sam_vit_h_4b8939.pth"
     )
     sam.to(device="cuda")
     mask_predictor = SamPredictor(sam)
@@ -64,7 +65,7 @@ def main():
     file_folder = []
     if not os.path.exists(mask_dir):
         os.mkdir(mask_dir)
-    
+
     # This walks through the data directory structure, retrieves
     # the desired files for processing, gets their parent folders
     # (modality folder, i.e. XRay and subfolder i.e. specific dataset
@@ -81,7 +82,9 @@ def main():
                     modality_folder = os.path.dirname(modality_subfolder)
 
                     new_mask_folder = os.path.join(mask_dir, modality_folder)
-                    new_mask_subfolder = os.path.join(mask_dir, modality_subfolder)
+                    new_mask_subfolder = os.path.join(
+                        mask_dir, modality_subfolder
+                    )
                     # Make new mask directories if they do not already exist
                     if not os.path.exists(new_mask_folder):
                         os.mkdir(new_mask_folder)
@@ -90,11 +93,11 @@ def main():
 
                     full_path = os.path.join(root, file)
                     # Skip over files if they have already been generated
-                    #if os.path.exists(os.path.join(new_mask_subfolder, file)):
+                    # if os.path.exists(os.path.join(new_mask_subfolder, file)):
                     #    continue
-                    #else:
+                    # else:
                     file_folder.append(full_path)
-  
+
     for f in tqdm(file_folder):
         new_folder = os.path.dirname(f).replace(data_dir, "")[1:]
         mask_folder = os.path.join(mask_dir, new_folder)
@@ -107,7 +110,7 @@ def main():
             continue
 
         data_dict = {"imgs": img}
-        
+
         # If a 3D volume, get image and mask slices for
         # each timestep.
         if len(img.shape) > 2 and img.shape[2] != 3:
