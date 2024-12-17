@@ -107,7 +107,9 @@ class SamAutomaticMaskGenerator:
         elif point_grids is not None:
             self.point_grids = point_grids
         else:
-            raise ValueError("Can't have both points_per_side and point_grid be None.")
+            raise ValueError(
+                "Can't have both points_per_side and point_grid be None."
+            )
 
         assert output_mode in [
             "binary_mask",
@@ -172,9 +174,13 @@ class SamAutomaticMaskGenerator:
 
         # Encode masks
         if self.output_mode == "coco_rle":
-            mask_data["segmentations"] = [coco_encode_rle(rle) for rle in mask_data["rles"]]
+            mask_data["segmentations"] = [
+                coco_encode_rle(rle) for rle in mask_data["rles"]
+            ]
         elif self.output_mode == "binary_mask":
-            mask_data["segmentations"] = [rle_to_mask(rle) for rle in mask_data["rles"]]
+            mask_data["segmentations"] = [
+                rle_to_mask(rle) for rle in mask_data["rles"]
+            ]
         else:
             mask_data["segmentations"] = mask_data["rles"]
 
@@ -188,7 +194,9 @@ class SamAutomaticMaskGenerator:
                 "predicted_iou": mask_data["iou_preds"][idx].item(),
                 "point_coords": [mask_data["points"][idx].tolist()],
                 "stability_score": mask_data["stability_score"][idx].item(),
-                "crop_box": box_xyxy_to_xywh(mask_data["crop_boxes"][idx]).tolist(),
+                "crop_box": box_xyxy_to_xywh(
+                    mask_data["crop_boxes"][idx]
+                ).tolist(),
             }
             curr_anns.append(ann)
 
@@ -203,7 +211,9 @@ class SamAutomaticMaskGenerator:
         # Iterate over image crops
         data = MaskData()
         for crop_box, layer_idx in zip(crop_boxes, layer_idxs):
-            crop_data = self._process_crop(image, crop_box, layer_idx, orig_size)
+            crop_data = self._process_crop(
+                image, crop_box, layer_idx, orig_size
+            )
             data.cat(crop_data)
 
         # Remove duplicate masks between crops
@@ -241,8 +251,12 @@ class SamAutomaticMaskGenerator:
 
         # Generate masks for this crop in batches
         data = MaskData()
-        for (points,) in batch_iterator(self.points_per_batch, points_for_image):
-            batch_data = self._process_batch(points, cropped_im_size, crop_box, orig_size)
+        for (points,) in batch_iterator(
+            self.points_per_batch, points_for_image
+        ):
+            batch_data = self._process_batch(
+                points, cropped_im_size, crop_box, orig_size
+            )
             data.cat(batch_data)
             del batch_data
         self.predictor.reset_image()
@@ -259,7 +273,9 @@ class SamAutomaticMaskGenerator:
         # Return to the original image frame
         data["boxes"] = uncrop_boxes_xyxy(data["boxes"], crop_box)
         data["points"] = uncrop_points(data["points"], crop_box)
-        data["crop_boxes"] = torch.tensor([crop_box for _ in range(len(data["rles"]))])
+        data["crop_boxes"] = torch.tensor(
+            [crop_box for _ in range(len(data["rles"]))]
+        )
 
         return data
 
@@ -273,9 +289,15 @@ class SamAutomaticMaskGenerator:
         orig_h, orig_w = orig_size
 
         # Run model on this batch
-        transformed_points = self.predictor.transform.apply_coords(points, im_size)
-        in_points = torch.as_tensor(transformed_points, device=self.predictor.device)
-        in_labels = torch.ones(in_points.shape[0], dtype=torch.int, device=in_points.device)
+        transformed_points = self.predictor.transform.apply_coords(
+            points, im_size
+        )
+        in_points = torch.as_tensor(
+            transformed_points, device=self.predictor.device
+        )
+        in_labels = torch.ones(
+            in_points.shape[0], dtype=torch.int, device=in_points.device
+        )
         masks, iou_preds, _ = self.predictor.predict_torch(
             in_points[:, None, :],
             in_labels[:, None],
@@ -298,7 +320,9 @@ class SamAutomaticMaskGenerator:
 
         # Calculate stability score
         data["stability_score"] = calculate_stability_score(
-            data["masks"], self.predictor.model.mask_threshold, self.stability_score_offset
+            data["masks"],
+            self.predictor.model.mask_threshold,
+            self.stability_score_offset,
         )
         if self.stability_score_thresh > 0.0:
             keep_mask = data["stability_score"] >= self.stability_score_thresh
@@ -309,7 +333,9 @@ class SamAutomaticMaskGenerator:
         data["boxes"] = batched_mask_to_box(data["masks"])
 
         # Filter boxes that touch crop boundaries
-        keep_mask = ~is_box_near_crop_edge(data["boxes"], crop_box, [0, 0, orig_w, orig_h])
+        keep_mask = ~is_box_near_crop_edge(
+            data["boxes"], crop_box, [0, 0, orig_w, orig_h]
+        )
         if not torch.all(keep_mask):
             data.filter(keep_mask)
 
@@ -366,7 +392,9 @@ class SamAutomaticMaskGenerator:
             if scores[i_mask] == 0.0:
                 mask_torch = masks[i_mask].unsqueeze(0)
                 mask_data["rles"][i_mask] = mask_to_rle_pytorch(mask_torch)[0]
-                mask_data["boxes"][i_mask] = boxes[i_mask]  # update res directly
+                mask_data["boxes"][i_mask] = boxes[
+                    i_mask
+                ]  # update res directly
         mask_data.filter(keep_by_nms)
 
         return mask_data

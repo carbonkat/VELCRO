@@ -43,6 +43,7 @@ def expand_3d(
 
 
 def main():
+    """Main function to generate SAM masks for v1 dataset images."""
 
     # TODO(carbonkat): link this with the datadir parameter set in the paths file
     # in configs.

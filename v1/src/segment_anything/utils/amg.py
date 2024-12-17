@@ -54,7 +54,9 @@ class MaskData:
             elif isinstance(v, list):
                 self._stats[k] = [v[i] for i in keep]
             else:
-                raise TypeError(f"MaskData key {k} has an unsupported type {type(v)}.")
+                raise TypeError(
+                    f"MaskData key {k} has an unsupported type {type(v)}."
+                )
 
     def cat(self, new_stats: "MaskData") -> None:
         for k, v in new_stats.items():
@@ -67,7 +69,9 @@ class MaskData:
             elif isinstance(v, list):
                 self._stats[k] = self._stats[k] + deepcopy(v)
             else:
-                raise TypeError(f"MaskData key {k} has an unsupported type {type(v)}.")
+                raise TypeError(
+                    f"MaskData key {k} has an unsupported type {type(v)}."
+                )
 
     def to_numpy(self) -> None:
         for k, v in self._stats.items():
@@ -76,14 +80,25 @@ class MaskData:
 
 
 def is_box_near_crop_edge(
-    boxes: torch.Tensor, crop_box: List[int], orig_box: List[int], atol: float = 20.0
+    boxes: torch.Tensor,
+    crop_box: List[int],
+    orig_box: List[int],
+    atol: float = 20.0,
 ) -> torch.Tensor:
     """Filter masks at the edge of a crop, but not at the edge of the original image."""
-    crop_box_torch = torch.as_tensor(crop_box, dtype=torch.float, device=boxes.device)
-    orig_box_torch = torch.as_tensor(orig_box, dtype=torch.float, device=boxes.device)
+    crop_box_torch = torch.as_tensor(
+        crop_box, dtype=torch.float, device=boxes.device
+    )
+    orig_box_torch = torch.as_tensor(
+        orig_box, dtype=torch.float, device=boxes.device
+    )
     boxes = uncrop_boxes_xyxy(boxes, crop_box).float()
-    near_crop_edge = torch.isclose(boxes, crop_box_torch[None, :], atol=atol, rtol=0)
-    near_image_edge = torch.isclose(boxes, orig_box_torch[None, :], atol=atol, rtol=0)
+    near_crop_edge = torch.isclose(
+        boxes, crop_box_torch[None, :], atol=atol, rtol=0
+    )
+    near_image_edge = torch.isclose(
+        boxes, orig_box_torch[None, :], atol=atol, rtol=0
+    )
     near_crop_edge = torch.logical_and(near_crop_edge, ~near_image_edge)
     return torch.any(near_crop_edge, dim=1)
 
@@ -125,7 +140,9 @@ def mask_to_rle_pytorch(tensor: torch.Tensor) -> List[Dict[str, Any]]:
             [
                 torch.tensor([0], dtype=cur_idxs.dtype, device=cur_idxs.device),
                 cur_idxs + 1,
-                torch.tensor([h * w], dtype=cur_idxs.dtype, device=cur_idxs.device),
+                torch.tensor(
+                    [h * w], dtype=cur_idxs.dtype, device=cur_idxs.device
+                ),
             ]
         )
         btw_idxs = cur_idxs[1:] - cur_idxs[:-1]
@@ -222,8 +239,12 @@ def generate_crop_boxes(
         crop_w = crop_len(im_w, n_crops_per_side, overlap)
         crop_h = crop_len(im_h, n_crops_per_side, overlap)
 
-        crop_box_x0 = [int((crop_w - overlap) * i) for i in range(n_crops_per_side)]
-        crop_box_y0 = [int((crop_h - overlap) * i) for i in range(n_crops_per_side)]
+        crop_box_x0 = [
+            int((crop_w - overlap) * i) for i in range(n_crops_per_side)
+        ]
+        crop_box_y0 = [
+            int((crop_h - overlap) * i) for i in range(n_crops_per_side)
+        ]
 
         # Crops in XYWH format
         for x0, y0 in product(crop_box_x0, crop_box_y0):
@@ -276,7 +297,9 @@ def remove_small_regions(
     assert mode in ["holes", "islands"]
     correct_holes = mode == "holes"
     working_mask = (correct_holes ^ mask).astype(np.uint8)
-    n_labels, regions, stats, _ = cv2.connectedComponentsWithStats(working_mask, 8)
+    n_labels, regions, stats, _ = cv2.connectedComponentsWithStats(
+        working_mask, 8
+    )
     sizes = stats[:, -1][1:]  # Row 0 is background label
     small_regions = [i + 1 for i, s in enumerate(sizes) if s < area_thresh]
     if len(small_regions) == 0:
@@ -296,7 +319,9 @@ def coco_encode_rle(uncompressed_rle: Dict[str, Any]) -> Dict[str, Any]:
 
     h, w = uncompressed_rle["size"]
     rle = mask_utils.frPyObjects(uncompressed_rle, h, w)
-    rle["counts"] = rle["counts"].decode("utf-8")  # Necessary to serialize with json
+    rle["counts"] = rle["counts"].decode(
+        "utf-8"
+    )  # Necessary to serialize with json
     return rle
 
 
@@ -319,14 +344,18 @@ def batched_mask_to_box(masks: torch.Tensor) -> torch.Tensor:
 
     # Get top and bottom edges
     in_height, _ = torch.max(masks, dim=-1)
-    in_height_coords = in_height * torch.arange(h, device=in_height.device)[None, :]
+    in_height_coords = (
+        in_height * torch.arange(h, device=in_height.device)[None, :]
+    )
     bottom_edges, _ = torch.max(in_height_coords, dim=-1)
     in_height_coords = in_height_coords + h * (~in_height)
     top_edges, _ = torch.min(in_height_coords, dim=-1)
 
     # Get left and right edges
     in_width, _ = torch.max(masks, dim=-2)
-    in_width_coords = in_width * torch.arange(w, device=in_width.device)[None, :]
+    in_width_coords = (
+        in_width * torch.arange(w, device=in_width.device)[None, :]
+    )
     right_edges, _ = torch.max(in_width_coords, dim=-1)
     in_width_coords = in_width_coords + w * (~in_width)
     left_edges, _ = torch.min(in_width_coords, dim=-1)
@@ -334,7 +363,9 @@ def batched_mask_to_box(masks: torch.Tensor) -> torch.Tensor:
     # If the mask is empty the right edge will be to the left of the left edge.
     # Replace these boxes with [0, 0, 0, 0]
     empty_filter = (right_edges < left_edges) | (bottom_edges < top_edges)
-    out = torch.stack([left_edges, top_edges, right_edges, bottom_edges], dim=-1)
+    out = torch.stack(
+        [left_edges, top_edges, right_edges, bottom_edges], dim=-1
+    )
     out = out * (~empty_filter).unsqueeze(-1)
 
     # Return to original shape
