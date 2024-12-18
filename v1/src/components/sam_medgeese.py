@@ -46,8 +46,7 @@ class SAMMedGeese(TwoTowerEncoder):
         self.text_model = AutoModel.from_pretrained(text_model_path)
         # TODO (carbonkat): make this path dynamic!
         self.vision_model = sam_model_registry["vit_b"](
-            checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/ \
-            checkpoints/{vision_model_path}"
+            checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/checkpoints/{vision_model_path}"
         )
         self.vision_layer_norm = nn.Identity()
 
