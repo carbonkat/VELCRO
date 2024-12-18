@@ -46,6 +46,7 @@ class SAMMedGeese(TwoTowerEncoder):
         # TODO (carbonkat): make this path dynamic!
         self.vision_model = sam_model_registry["vit_b"](
             checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/checkpoints/{vision_model_path}"
+        )
 
         text_embedding_dim = self.text_model.config.hidden_size
         image_embedding_dim = (
@@ -140,12 +141,14 @@ class SAMMedGeese(TwoTowerEncoder):
         # attention mechanism to integrate text information.
         candidate_embed = self.text_projection(candidate_embed)  # (B, proj dim)
 
+        pe = self.vision_model.prompt_encoder.get_dense_pe()
+        pe = torch.repeat_interleave(pe, img.shape[0], dim=0)
         # This generates low resolution masks by decoding the image embedding,
         # sparse prompts, and dense prompts into masks. Right now, I only generate
         # one mask per image.
         low_res_masks, _, mask_embeddings = self.vision_model.mask_decoder(
             image_embeddings=img_embed,
-            image_pe=self.vision_model.prompt_encoder.get_dense_pe(),
+            image_pe=pe,
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
             text_embeddings=candidate_embed.unsqueeze(1),
@@ -153,17 +156,19 @@ class SAMMedGeese(TwoTowerEncoder):
         )
         # low_res_masks = (B, num_masks/batch, 256, 256)
         # mask_embeddings = (B, num_masks/batch, 256)
-          
+
         # This converts the low resolution masks to the original image resolution.
         # Needed for IOU loss calculation
         upscaled_masks = self.vision_model.postprocess_masks(
-            masks, (1024, 1024), (1024, 1024)
+            low_res_masks, (1024, 1024), (1024, 1024)
         )
 
         if self.sequential:
-            # Threshold masks to produce binary outputs. Do we need to do this with
-            # functionals?
-            upscaled_binary_masks = upscaled_masks > self.vision_model.mask_threshold
+            # Threshold masks to produce binary outputs. Do we need to do this
+            # with functionals?
+            upscaled_binary_masks = (
+                upscaled_masks > self.vision_model.mask_threshold
+            )
             roi_embeddings = self.sequential_roi(
                 upscaled_binary_masks, last_hidden_state
             )
@@ -177,23 +182,26 @@ class SAMMedGeese(TwoTowerEncoder):
             upscaled_masks,
         )
 
-    def sequential_roi(self, masks, last_hidden_state):
+    def sequential_roi(
+        self, masks: torch.Tensor, last_hidden_state: torch.Tensor
+    ):
         """
         Perform ROI embedding sequentially in the same manner as v1-CLIP.
 
         Args:
             masks (torch.Tensor): the upscaled masks produced by the
                 mask decoder after post-processing and binarization.
+                Expected shape is (B, C, H, W)
             last_hidden_state (torch.Tensor): the image embedding retrieved from
                 the ViT image encoder before layer normalization.
+                Expected shape is (B, 64, 64, image embedding dim)
 
         Returns:
             torch.Tensor: normalized region of interest embeddings.
         """
-
         # Take the upscaled masks and apply convolution to project
         # into hidden image embedding space.
-        masks = (self.expand_mask_kernel(upscaled_masks) > 0).float()
+        masks = (self.expand_mask_kernel(masks) > 0).float()
         masks = masks.flatten(start_dim=1).float()
 
         last_hidden_state = last_hidden_state.flatten(start_dim=1, end_dim=2)
@@ -213,5 +221,5 @@ class SAMMedGeese(TwoTowerEncoder):
         mask_size = masks.sum(dim=-1, keepdim=True)
         # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
-          
+
         return normalized_mask_embeds

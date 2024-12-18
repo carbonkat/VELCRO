@@ -137,8 +137,6 @@ class Model(pl.LightningModule):
         x, y = batch["x"], batch["y"]
         outs = self.forward(x)
         loss, preds = self.loss(*outs, y)
-        # roi_embeddings, candidate_embeddings = self.forward(x)
-        # loss, preds = self.loss(roi_embeddings, candidate_embeddings, y)
 
         return loss, preds, y
 

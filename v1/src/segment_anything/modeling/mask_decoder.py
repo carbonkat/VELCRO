@@ -117,7 +117,7 @@ class MaskDecoder(nn.Module):
         else:
             mask_slice = slice(0, 1)
         masks = masks[:, mask_slice, :, :]
-        mask_embeddings = mask_embeddings[:,mask_slice, :]
+        mask_embeddings = mask_embeddings[:, mask_slice, :]
         iou_pred = iou_pred[:, mask_slice]
 
         # Prepare output
@@ -143,18 +143,19 @@ class MaskDecoder(nn.Module):
         tokens = torch.cat(
             (output_tokens, sparse_prompt_embeddings, text_embeddings), dim=1
         )
-        # Expand per-image data in batch direction to be per-mask
-        if image_embeddings.shape[0] != tokens.shape[0]:
+        # Expand per-image data in batch direction to be per-mask. This only
+        # needs to be done if a single image is passed in, for which we are
+        # predicting multiple masks. In this case
+        if image_embeddings.shape[0] == 1:
             src = torch.repeat_interleave(
                 image_embeddings, tokens.shape[0], dim=0
             )
         else:
             src = image_embeddings
-
+        
+        pos_src = image_pe
         src = src + dense_prompt_embeddings
-        pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
-
         # Run the transformer
         hs, src = self.transformer(src, pos_src, tokens)
         iou_token_out = hs[:, 0, :]
