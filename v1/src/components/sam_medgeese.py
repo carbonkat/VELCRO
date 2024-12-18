@@ -23,8 +23,9 @@ class SAMMedGeese(TwoTowerEncoder):
     def __init__(
         self,
         text_model_path: str = "bert-base-uncased",
-        vision_model_path: str = "sam_vit_h_4b8939.pth",
+        vision_model_path: str = "sam_vit_h.pth",
         projection_dim: int = 512,
+        sequential: bool = True,
     ):
         """Constructs the model.
 
@@ -34,34 +35,39 @@ class SAMMedGeese(TwoTowerEncoder):
             vision_model_path (str): The SAM checkpoint identifier for the
                 vision model. This should be located in the segment_anything
                 folder
-            patch_size (int): The cnn patch size used for tokenization. This is
-                used to expand the pixel-level mask to the correct image patches.
-                Since SAM's vision encoder uses VIT, this can be retrieved from
-                accessing the vision encoder's parameters.
-            is_clip (bool): A flag indicating whether or not a CLIP text model
-                should be used for text encoding. This would take the place of
-                the custom text prompt encoder. (Will likely be removed later)
+            projection_dim (int): The dimension of the shared embedding space
+                which the text and ROI embeddings will be projected into.
+            sequential (bool): whether to generate ROI embeddings sequentially (in
+                the same style as V1-CLIP), or using native mask embeddings (SAM)
         """
         super().__init__()
+        self.sequential = sequential
         self.text_model = AutoModel.from_pretrained(text_model_path)
         # TODO (carbonkat): make this path dynamic!
         self.vision_model = sam_model_registry["default"](
-            checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/{vision_model_path}"
+            checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/ \
+            checkpoints/{vision_model_path}"
         )
-        self.vision_layer_norm = nn.Identity()
-
-        self.text_model
-        self.vision_model
 
         text_embedding_dim = self.text_model.config.hidden_size
         image_embedding_dim = (
             self.vision_model.image_encoder.patch_embed.proj.out_channels
         )
+        self.vision_norm = nn.LayerNorm(image_embedding_dim)
+
         self.patch_size = (
             self.vision_model.image_encoder.patch_embed.proj.kernel_size[0]
         )
         self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
-        self.vision_projection = nn.Linear(image_embedding_dim, projection_dim)
+        if self.sequential:
+            self.vision_projection = nn.Linear(
+                image_embedding_dim, projection_dim
+            )
+        else:
+            self.vision_projection = nn.Linear(
+                self.vision_model.mask_decoder.transformer_dim, projection_dim
+            )
+            # self.vision_projection = nn.Linear()
 
         # Because masks are given as a region within pixel space (255, 255),
         # we need to map them to the tokens that the vision model creates.
@@ -106,77 +112,91 @@ class SAMMedGeese(TwoTowerEncoder):
             representing the ROI embeddings, and the third representing the
             computed SAM mask(s).
         """
-        # TODO(liamhebert): Ideally, we should have "img" be a field and we map
-        # it to self.vision model (ie: self.vision_model(**image_input["img"]))
-        # That way it can be flexible in case other models have different input
-        # types.
         img = image_input["img"]
-        if len(bounding_boxes.shape) == 2:
-            bounding_boxes = bounding_boxes[:, None, :]  # (B, 1, 4)
+        bounding_boxes = bounding_boxes[:, None, :]  # (B, 1, 4)
 
         # The SAM image encoder includes a neck, which is used
         # to assist with mask decoding. For the embedding alignment portion,
         # we don't want this, just the standard VIT encoder part. I have modified
-        #  the original codebase to return the last pre-neck embedding. I
-        # hope this has a similar effect to what the CLIP version does.
+        #  the original codebase to return the last pre-neck embedding.
         img_embed, last_hidden_state = self.vision_model.image_encoder(img)
-        last_hidden_state = last_hidden_state.flatten(start_dim=1, end_dim=2)
+        # img_embed = (B, 64, 64, 256)
+        # last_hidden_state = (B, 64, 64, image embedding dim (1280 for vit-h))
 
         # Obtain embeddings for bounding boxes/points (sparse embeddings) and
-        # dense embeddings for masks. The original paper chooses to treat
-        # "text" inputs as sparse embeddings (though they don't actually train
-        # on text).
+        # dense embeddings for masks.
         sparse_embeddings, dense_embeddings = self.vision_model.prompt_encoder(
             points=None,
             boxes=bounding_boxes,
             masks=None,
         )
+        # sparse embeddings = (B, 2, 256)
+        # dense_embeddings = (B, 256, 64, 64)
 
-        # This gets the [CLS] token
         candidate_embed = self.text_model(**candidate_input).pooler_output
-        # In order to integrate text with the mask decoder, we need
-        # the embedding to be in the same latent space. To accomplish
-        # this, first project, then expand the tensor to be 3D in order
-        # to integrate it with the sparse/dense embeddings. This needs
-        # to be done in order for the custom attention mechanism to
-        # integrate text information. The text can be either expanded
-        # to be sparse or dense. For now, I am making it sparse since this
-        # requires less shape manipulation, but eventually we should test
-        # both.
-        candidate_embed = self.text_projection(candidate_embed)
-        candidate_embed = candidate_embed.unsqueeze(1).expand(
-            -1, sparse_embeddings.shape[1], -1
-        )
+        # In order to integrate text with the mask decoder, we need the embedding
+        # to be in the same latent space. To accomplish this, first project, then
+        # expand the tensor to be 3D in order to integrate it with the sparse/
+        # dense embeddings. This needs to be done in order for the custom
+        # attention mechanism to integrate text information.
+        candidate_embed = self.text_projection(candidate_embed)  # (B, proj dim)
 
-        # This generates low resolution masks by decoding the
-        # image embedding, sparse prompts, and dense prompts
-        # into masks. Right now, I only generate one mask per image.
-        low_res_masks, _ = self.vision_model.mask_decoder(
+        # This generates low resolution masks by decoding the image embedding,
+        # sparse prompts, and dense prompts into masks. Right now, I only generate
+        # one mask per image.
+        low_res_masks, _, mask_embeddings = self.vision_model.mask_decoder(
             image_embeddings=img_embed,
             image_pe=self.vision_model.prompt_encoder.get_dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
-            text_embeddings=candidate_embed,
+            text_embeddings=candidate_embed.unsqueeze(1),
             multimask_output=False,
         )
+        # low_res_masks = (B, num_masks/batch, 256, 256)
+        # mask_embeddings = (B, num_masks/batch, 256)
 
-        # TODO(carbonkat): make the resizing dynamic!
-        # This converts the low resolution masks to the original
-        # image resolution. Needed for IOU loss calculation
+        if self.sequential:
+            roi_embeddings = self.sequential_roi(
+                low_res_masks, last_hidden_state
+            )
+        else:
+            roi_embeddings = mask_embeddings.squeeze(1)
+            roi_embeddings = self.vision_projection(roi_embeddings)
+
+        return
+
+    def sequential_roi(self, masks, last_hidden_state):
+        """
+        Perform ROI embedding sequentially in the same manner as v1-CLIP.
+
+        Args:
+            masks (torch.Tensor): the low resolution mask logits produced by the
+                mask decoder.
+            last_hidden_state (torch.Tensor): the image embedding retrieved from
+                the ViT image encoder before layer normalization.
+
+        Returns:
+            torch.Tensor: normalized region of interest embeddings.
+        """
+        # This converts the low resolution masks to the original image resolution.
+        # Needed for IOU loss calculation
         upscaled_masks = self.vision_model.postprocess_masks(
-            low_res_masks, (1024, 1024), (224, 224)
+            masks, (1024, 1024), (1024, 1024)
         )
+        # Threshold masks to produce binary outputs. Do we need to do this with
+        # functionals?
+        upscaled_masks = upscaled_masks > self.vision_model.mask_threshold
 
         # Take the upscaled masks and apply convolution to project
         # into hidden image embedding space.
         masks = (self.expand_mask_kernel(upscaled_masks) > 0).float()
         masks = masks.flatten(start_dim=1).float()
 
-        img_embed = self.vision_layer_norm(last_hidden_state)
+        last_hidden_state = last_hidden_state.flatten(start_dim=1, end_dim=2)
+        img_embed = self.vision_norm(last_hidden_state)
 
         # Project into desired shared image-text space.
         projected_img_embed = self.vision_projection(img_embed)
-
         mask_embeds = torch.einsum("bij, bi -> bj", projected_img_embed, masks)
         mask_embeds = mask_embeds.squeeze(-1)
         # Since the dot product above sums the tokens that make up the mask, we
@@ -190,8 +210,4 @@ class SAMMedGeese(TwoTowerEncoder):
         # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
 
-        # TODO(carbonkat): figure out returns for loss. This should be
-        # the masks (for IOU loss computation), ROI embeddings, and
-        # text embeddings. The envisioned combined loss will be the sum of the
-        # IOU and contrastive losses.
-        return
+        return normalized_mask_embeds
