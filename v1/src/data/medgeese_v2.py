@@ -79,13 +79,15 @@ def collate_fn(data):
         ([d["y"]["class_indices"] for d in data]), dim=0
     )
 
+    gold_masks = torch.stack(([d["y"]["gold_mask"] for d in data]), dim=0)
+
     return {
         "x": {
             "candidate_input": new_candidate_input,
             "image_input": new_image_input,
             "bounding_boxes": bounding_boxes,
         },
-        "y": {"class_indices": class_indices},
+        "y": {"class_indices": class_indices, "gold_mask": gold_masks},
     }
 
 
@@ -163,7 +165,6 @@ class MedGeeseDataModule(LightningDataModule):
         This is only called once on the rank 0 gpu per run, and results in
         memory are not replicated across gpus. This is useful for downloading.
         """
-        print("Starting v2 processing!")
         data_dir = os.path.join(self.hparams.data_dir, "v1")
 
         tensor_dir = self.hparams.tensor_dir
@@ -340,13 +341,13 @@ class MedGeeseDataModule(LightningDataModule):
                 try:
 
                     img = Image.fromarray(img).convert("RGB")
-                    mask = Image.fromarray(mask).convert("RGB")
+                    mask = Image.fromarray(mask)
 
                     # Scaling factors for bounding boxes. This is
                     # needed to reshape them after the image and
                     # mask are resized to constant dimensions.
-                    x_scale = 224 / mask.size[0]
-                    y_scale = 224 / mask.size[1]
+                    x_scale = 1024 / mask.size[0]
+                    y_scale = 1024 / mask.size[1]
 
                     bboxes = regionprops(np.asarray(mask))
                     # For some reason, resizing the image before
@@ -363,8 +364,8 @@ class MedGeeseDataModule(LightningDataModule):
                         ymax = int(np.round(bbox[2] * y_scale))
                         reordered_boxes.append([x1, y1, xmax, ymax])
 
-                    img = img.resize((224, 224), Image.LANCZOS)
-                    mask = mask.resize((224, 224), Image.LANCZOS)
+                    img = img.resize((1024, 1024), Image.LANCZOS)
+                    mask = mask.resize((1024, 1024), Image.LANCZOS)
 
                     # TODO(liamhebert): Ensure that files are saved in a somewhat
                     # standardized way to match the rest of the datasets. For
@@ -538,7 +539,7 @@ class MedGeeseDataset(Dataset):
         assert isinstance(candidate_text, dict), f"{type(candidate_text)=}"
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
         assert isinstance(bboxes, list), f"{type(bboxes)=}"
-
+        # TODO (carbonkat): add bounding box transform!!
         mask = tv.Mask(mask)
         img = tv.Image(img)
         if torch.max(mask) == 0:
@@ -572,10 +573,10 @@ class MedGeeseDataset(Dataset):
         return {
             "x": {
                 "candidate_input": candidate_text,
-                "image_input": {"mask": mask, "img": inputs.pixel_values},
+                "image_input": {"img": inputs.pixel_values},
                 "bounding_boxes": inputs.input_boxes,
             },
-            "y": {"class_indices": label},
+            "y": {"class_indices": label, "gold_mask": mask},
         }
 
     def __len__(self):
