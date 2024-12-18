@@ -1,0 +1,14 @@
+_target_: loss.CombinedLoss
+weight_contrastive: 1.0
+weight_segmentation: 1.0
+
+contrastive_loss:
+  _target_: loss.ContrastiveLoss
+  remove_duplicates: true
+  temperature: 0.50
+  learnable_temperature: True
+
+segmentation_loss:
+  _target_: loss.SegmentationLoss
+  weight_focal: 20.0
+  weight_dice: 1.0

@@ -1,6 +1,6 @@
 defaults:
   - encoder: sam_medgeese
-  - loss: contrastive_loss
+  - loss: combined_loss
 
 _target_: model.Model
 

@@ -23,7 +23,7 @@ class SAMMedGeese(TwoTowerEncoder):
     def __init__(
         self,
         text_model_path: str = "bert-base-uncased",
-        vision_model_path: str = "sam_vit_h.pth",
+        vision_model_path: str = "sam_vit_b.pth",
         projection_dim: int = 512,
         sequential: bool = True,
     ):
@@ -44,10 +44,8 @@ class SAMMedGeese(TwoTowerEncoder):
         self.sequential = sequential
         self.text_model = AutoModel.from_pretrained(text_model_path)
         # TODO (carbonkat): make this path dynamic!
-        self.vision_model = sam_model_registry["default"](
-            checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/ \
-            checkpoints/{vision_model_path}"
-        )
+        self.vision_model = sam_model_registry["vit_b"](
+            checkpoint=f"/home/carbok/MedGeese/v1/src/segment_anything/checkpoints/{vision_model_path}"
 
         text_embedding_dim = self.text_model.config.hidden_size
         image_embedding_dim = (
@@ -105,6 +103,7 @@ class SAMMedGeese(TwoTowerEncoder):
             candidate_input (dict): Dict of the inputs required for the candidate
                 model.
             image_input (dict): Dict of the inputs required for the image tower.
+            bounding_boxes (torch.Tensor): Tensors for bounding boxes.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Returns three
@@ -154,38 +153,43 @@ class SAMMedGeese(TwoTowerEncoder):
         )
         # low_res_masks = (B, num_masks/batch, 256, 256)
         # mask_embeddings = (B, num_masks/batch, 256)
+          
+        # This converts the low resolution masks to the original image resolution.
+        # Needed for IOU loss calculation
+        upscaled_masks = self.vision_model.postprocess_masks(
+            masks, (1024, 1024), (1024, 1024)
+        )
 
         if self.sequential:
+            # Threshold masks to produce binary outputs. Do we need to do this with
+            # functionals?
+            upscaled_binary_masks = upscaled_masks > self.vision_model.mask_threshold
             roi_embeddings = self.sequential_roi(
-                low_res_masks, last_hidden_state
+                upscaled_binary_masks, last_hidden_state
             )
         else:
             roi_embeddings = mask_embeddings.squeeze(1)
             roi_embeddings = self.vision_projection(roi_embeddings)
 
-        return
+        return (
+            roi_embeddings,
+            candidate_embed,
+            upscaled_masks,
+        )
 
     def sequential_roi(self, masks, last_hidden_state):
         """
         Perform ROI embedding sequentially in the same manner as v1-CLIP.
 
         Args:
-            masks (torch.Tensor): the low resolution mask logits produced by the
-                mask decoder.
+            masks (torch.Tensor): the upscaled masks produced by the
+                mask decoder after post-processing and binarization.
             last_hidden_state (torch.Tensor): the image embedding retrieved from
                 the ViT image encoder before layer normalization.
 
         Returns:
             torch.Tensor: normalized region of interest embeddings.
         """
-        # This converts the low resolution masks to the original image resolution.
-        # Needed for IOU loss calculation
-        upscaled_masks = self.vision_model.postprocess_masks(
-            masks, (1024, 1024), (1024, 1024)
-        )
-        # Threshold masks to produce binary outputs. Do we need to do this with
-        # functionals?
-        upscaled_masks = upscaled_masks > self.vision_model.mask_threshold
 
         # Take the upscaled masks and apply convolution to project
         # into hidden image embedding space.
@@ -204,10 +208,10 @@ class SAMMedGeese(TwoTowerEncoder):
         # make up the mask (ie: taking the mean). This is because some masks can
         # be larger then others.
 
-        # First, we calculating the number of mask tokens per image. This is just
+        # First, we calculate the number of mask tokens per image. This is just
         # done by summing the mask over the last dimension.
         mask_size = masks.sum(dim=-1, keepdim=True)
         # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
-
+          
         return normalized_mask_embeds

@@ -135,8 +135,10 @@ class Model(pl.LightningModule):
             The loss value for that batch, using self.loss.
         """
         x, y = batch["x"], batch["y"]
-        roi_embeddings, candidate_embeddings = self.forward(x)
-        loss, preds = self.loss(roi_embeddings, candidate_embeddings, y)
+        outs = self.forward(x)
+        loss, preds = self.loss(*outs, y)
+        # roi_embeddings, candidate_embeddings = self.forward(x)
+        # loss, preds = self.loss(roi_embeddings, candidate_embeddings, y)
 
         return loss, preds, y
 
