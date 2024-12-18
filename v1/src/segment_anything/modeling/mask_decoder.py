@@ -103,7 +103,7 @@ class MaskDecoder(nn.Module):
           torch.Tensor: batched predicted masks
           torch.Tensor: batched predictions of mask quality
         """
-        masks, iou_pred = self.predict_masks(
+        masks, iou_pred, mask_embeddings = self.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=image_pe,
             sparse_prompt_embeddings=sparse_prompt_embeddings,
@@ -117,10 +117,11 @@ class MaskDecoder(nn.Module):
         else:
             mask_slice = slice(0, 1)
         masks = masks[:, mask_slice, :, :]
+        mask_embeddings = mask_embeddings[:,mask_slice, :]
         iou_pred = iou_pred[:, mask_slice]
 
         # Prepare output
-        return masks, iou_pred
+        return masks, iou_pred, mask_embeddings
 
     def predict_masks(
         self,
@@ -150,7 +151,6 @@ class MaskDecoder(nn.Module):
         else:
             src = image_embeddings
 
-        # TODO(carbonkat): treat text as dense prompt embedding?
         src = src + dense_prompt_embeddings
         pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
@@ -159,7 +159,6 @@ class MaskDecoder(nn.Module):
         hs, src = self.transformer(src, pos_src, tokens)
         iou_token_out = hs[:, 0, :]
         mask_tokens_out = hs[:, 1 : (1 + self.num_mask_tokens), :]
-
         # Upscale mask embeddings and predict masks using the mask tokens
         src = src.transpose(1, 2).view(b, c, h, w)
         upscaled_embedding = self.output_upscaling(src)
@@ -177,7 +176,7 @@ class MaskDecoder(nn.Module):
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
 
-        return masks, iou_pred
+        return masks, iou_pred, mask_tokens_out
 
 
 # Lightly adapted from

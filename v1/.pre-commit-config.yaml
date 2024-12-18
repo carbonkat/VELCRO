@@ -1,7 +1,7 @@
 default_language_version:
   python: python3
 
-exclude: "v0/.*"
+exclude: "(v0/.*)|(v1/src/segment_anything/.*)"
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

@@ -48,32 +48,47 @@ class SamOnnxModel(nn.Module):
         transformed_size = torch.floor(transformed_size + 0.5).to(torch.int64)
         return transformed_size
 
-    def _embed_points(self, point_coords: torch.Tensor, point_labels: torch.Tensor) -> torch.Tensor:
+    def _embed_points(
+        self, point_coords: torch.Tensor, point_labels: torch.Tensor
+    ) -> torch.Tensor:
         point_coords = point_coords + 0.5
         point_coords = point_coords / self.img_size
-        point_embedding = self.model.prompt_encoder.pe_layer._pe_encoding(point_coords)
+        point_embedding = self.model.prompt_encoder.pe_layer._pe_encoding(
+            point_coords
+        )
         point_labels = point_labels.unsqueeze(-1).expand_as(point_embedding)
 
         point_embedding = point_embedding * (point_labels != -1)
-        point_embedding = point_embedding + self.model.prompt_encoder.not_a_point_embed.weight * (
-            point_labels == -1
+        point_embedding = (
+            point_embedding
+            + self.model.prompt_encoder.not_a_point_embed.weight
+            * (point_labels == -1)
         )
 
         for i in range(self.model.prompt_encoder.num_point_embeddings):
-            point_embedding = point_embedding + self.model.prompt_encoder.point_embeddings[
-                i
-            ].weight * (point_labels == i)
+            point_embedding = (
+                point_embedding
+                + self.model.prompt_encoder.point_embeddings[i].weight
+                * (point_labels == i)
+            )
 
         return point_embedding
 
-    def _embed_masks(self, input_mask: torch.Tensor, has_mask_input: torch.Tensor) -> torch.Tensor:
-        mask_embedding = has_mask_input * self.model.prompt_encoder.mask_downscaling(input_mask)
+    def _embed_masks(
+        self, input_mask: torch.Tensor, has_mask_input: torch.Tensor
+    ) -> torch.Tensor:
+        mask_embedding = (
+            has_mask_input
+            * self.model.prompt_encoder.mask_downscaling(input_mask)
+        )
         mask_embedding = mask_embedding + (
             1 - has_mask_input
         ) * self.model.prompt_encoder.no_mask_embed.weight.reshape(1, -1, 1, 1)
         return mask_embedding
 
-    def mask_postprocessing(self, masks: torch.Tensor, orig_im_size: torch.Tensor) -> torch.Tensor:
+    def mask_postprocessing(
+        self, masks: torch.Tensor, orig_im_size: torch.Tensor
+    ) -> torch.Tensor:
         masks = F.interpolate(
             masks,
             size=(self.img_size, self.img_size),
@@ -81,12 +96,16 @@ class SamOnnxModel(nn.Module):
             align_corners=False,
         )
 
-        prepadded_size = self.resize_longest_image_size(orig_im_size, self.img_size).to(torch.int64)
+        prepadded_size = self.resize_longest_image_size(
+            orig_im_size, self.img_size
+        ).to(torch.int64)
         masks = masks[..., : prepadded_size[0], : prepadded_size[1]]  # type: ignore
 
         orig_im_size = orig_im_size.to(torch.int64)
         h, w = orig_im_size[0], orig_im_size[1]
-        masks = F.interpolate(masks, size=(h, w), mode="bilinear", align_corners=False)
+        masks = F.interpolate(
+            masks, size=(h, w), mode="bilinear", align_corners=False
+        )
         return masks
 
     def select_masks(
@@ -100,7 +119,9 @@ class SamOnnxModel(nn.Module):
         score = iou_preds + (num_points - 2.5) * score_reweight
         best_idx = torch.argmax(score, dim=1)
         masks = masks[torch.arange(masks.shape[0]), best_idx, :, :].unsqueeze(1)
-        iou_preds = iou_preds[torch.arange(masks.shape[0]), best_idx].unsqueeze(1)
+        iou_preds = iou_preds[torch.arange(masks.shape[0]), best_idx].unsqueeze(
+            1
+        )
 
         return masks, iou_preds
 
@@ -130,13 +151,17 @@ class SamOnnxModel(nn.Module):
             )
 
         if self.return_single_mask:
-            masks, scores = self.select_masks(masks, scores, point_coords.shape[1])
+            masks, scores = self.select_masks(
+                masks, scores, point_coords.shape[1]
+            )
 
         upscaled_masks = self.mask_postprocessing(masks, orig_im_size)
 
         if self.return_extra_metrics:
             stability_scores = calculate_stability_score(
-                upscaled_masks, self.model.mask_threshold, self.stability_score_offset
+                upscaled_masks,
+                self.model.mask_threshold,
+                self.stability_score_offset,
             )
             areas = (upscaled_masks > self.model.mask_threshold).sum(-1).sum(-1)
             return upscaled_masks, scores, stability_scores, areas, masks

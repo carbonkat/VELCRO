@@ -180,7 +180,7 @@ class MedGeeseDataModule(LightningDataModule):
         # pulling the original datasets and performing manual preprocessing.
         # For now, all multi-concept datasets have been removed from the
         # v1 dataset directory.
-        img_mask_path = os.path.join(data_dir, 'masks')
+        img_mask_path = os.path.join(data_dir, "masks")
         for root, _, files in os.walk(img_mask_path):
             for file in files:
                 if file.endswith(".npz"):
@@ -234,10 +234,10 @@ class MedGeeseDataModule(LightningDataModule):
             else:
                 # It is possible for images to be RGB and masks to
                 # be greyscale/2D arrays. To check shape agreement,
-                #only check the first and second shapes
+                # only check the first and second shapes
                 assert (
-                    img.shape[0] == mask.shape[0] and
-                    img.shape[1] == mask.shape[1]
+                    img.shape[0] == mask.shape[0]
+                    and img.shape[1] == mask.shape[1]
                 ), f"Image and mask shapes do not match. Got (image) \
                     {img.shape=} and (mask) {mask.shape=}."
                 imgs = [img]
