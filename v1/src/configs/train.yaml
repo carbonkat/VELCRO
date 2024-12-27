@@ -8,9 +8,9 @@ defaults:
   # TODO(liamhebert): Not a huge fan that modality_encoder is a top level package
   # and not nested under model, but it was causing me issues, so... here it is.
   - modality_encoder: clip
-  - data: v1
+  - data: v1-clip
   - callbacks: default
-  - logger: null # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - logger: wandb # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
   - trainer: gpu
   - paths: default
   - extras: default

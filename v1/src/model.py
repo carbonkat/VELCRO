@@ -13,6 +13,8 @@ import torch
 from torch import nn
 from torchmetrics import MaxMetric
 from torchmetrics import MeanMetric
+import os
+import json
 
 
 class TwoTowerEncoder(nn.Module, ABC):
@@ -60,6 +62,7 @@ class Model(pl.LightningModule):
         scheduler: Callable[..., torch.optim.lr_scheduler.LRScheduler],
         encoder: TwoTowerEncoder,
         loss: Loss,
+        data_dir: str,
         compile: bool = False,
     ) -> None:
         """Initializes the model.
@@ -104,7 +107,17 @@ class Model(pl.LightningModule):
         # for tracking best so far validation accuracy
         self.val_loss_best = MaxMetric()
 
-    # TODO(liamhebert): Implement model logic
+        data_dir = os.path.join(self.hparams.data_dir, "v1")
+        umls_path = data_dir
+        with open(umls_path + "/" + "UMLS_formatted.json") as json_file:
+            umls_terms = json.load(json_file)
+
+        # This makes the dict keys indices and the values the name of the
+        # corresponding class. Used for classification metrics.
+        reverse_term_dict = {}
+        for key in umls_terms.keys():
+            reverse_term_dict[umls_terms[key]["idx"]] = key
+        self.reverse_term_dict = reverse_term_dict
 
     def forward(
         self, x: dict[str, torch.Tensor]
@@ -150,6 +163,75 @@ class Model(pl.LightningModule):
         self.val_loss.reset()
         self.val_loss_best.reset()
 
+    def calculate_metrics(self, pred, labels, mode):
+        # classification metrics
+        batch_preds = pred
+        batch_labels = labels["class_indices"]
+        correct = torch.eq(batch_preds, batch_labels)
+        num_correct = correct.float().sum()
+
+        for i in batch_labels.unique():
+            num_label_correct = torch.logical_and(
+                (batch_preds == batch_labels), (batch_labels == i)
+            ).sum()
+            num_label_total = (batch_labels == i).sum()
+            num_label_pred = (batch_preds == i).sum()
+            if (
+                num_label_correct == 0
+                or num_label_pred == 0
+                or num_label_total == 0
+            ):
+                precision = torch.tensor(0.0).float()
+                recall = torch.tensor(0.0).float()
+                f1 = torch.tensor(0.0).float()
+            else:
+                precision = num_label_correct / num_label_pred
+                recall = num_label_correct / num_label_total
+                f1 = 2 * (precision * recall) / (precision + recall)
+
+            self.log(
+                f"{mode}/f1/{self.reverse_term_dict[int(i)]}",
+                f1,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=num_label_total,
+                sync_dist=True,
+            )
+            self.log(
+                f"{mode}/precision/{self.reverse_term_dict[int(i)]}",
+                precision,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=num_label_total,
+                sync_dist=True,
+            )
+            self.log(
+                f"{mode}/recall/{self.reverse_term_dict[int(i)]}",
+                recall,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=num_label_total,
+                sync_dist=True,
+            )
+
+        num_total = batch_labels.shape[0]
+
+        # accuracy
+        acc = num_correct / num_total
+        self.log(
+            f"{mode}/accuracy",
+            acc,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+            sync_dist=True,
+        )
+
+        ...
+
     def training_step(
         self, batch: dict[str, dict[str, torch.Tensor]], batch_idx: int
     ) -> torch.Tensor:
@@ -176,6 +258,8 @@ class Model(pl.LightningModule):
             prog_bar=True,
         )
 
+        self.calculate_metrics(preds, targets, "train")
+
         # return loss or backpropagation will fail
         return loss
 
@@ -201,6 +285,8 @@ class Model(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+
+        self.calculate_metrics(preds, targets, "val")
 
     def on_validation_epoch_end(self) -> None:
         "Lightning hook that is called when a validation epoch ends."
@@ -240,6 +326,7 @@ class Model(pl.LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+        self.calculate_metrics(preds, targets, "test")
         return loss
 
     def setup(self, stage: str) -> None:

@@ -181,14 +181,15 @@ class MedGeeseDataModule(LightningDataModule):
         # pulling the original datasets and performing manual preprocessing.
         # For now, all multi-concept datasets have been removed from the
         # v1 dataset directory.
-        img_mask_path = os.path.join(data_dir, "masks")
+        img_mask_path = os.path.join(data_dir, "ground_truths")
         for root, _, files in os.walk(img_mask_path):
             for file in files:
-                if file.endswith(".npz"):
+                if file.endswith(".npz") and ("MR" not in root and "CT" not in root):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
 
         mega = pd.DataFrame({"File": master_files, "Dataset": folders})
+        print(mega['Dataset'].value_counts())
 
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
