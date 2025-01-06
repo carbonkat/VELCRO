@@ -7,6 +7,8 @@ from abc import abstractmethod
 
 import torch
 from torch import nn
+from monai.losses import DiceLoss
+from monai.losses import FocalLoss
 
 
 class Loss(ABC, nn.Module):
@@ -240,5 +242,122 @@ class ContrastiveLoss(Loss):
 
         return (
             torch.nn.functional.cross_entropy(similarity, similarity_matrix),
+            preds,
+        )
+
+
+class SegmentationLoss(Loss):
+
+    dice_loss: DiceLoss
+    focal_loss: FocalLoss
+
+    def __init__(self, weight_focal: float = 20.0, weight_dice: float = 1.0):
+        """Compute the segmentation loss. This follows the loss described by
+        the original SAM paper (https://arxiv.org/pdf/2304.02643), where loss
+        is a linear combination of dice and focal loss. For DiceLoss, I follow
+        the parameter settings used by MedSAM
+
+        Args:
+            weight_focal: the scaling factor for the focal loss. Defaults to 20
+                per the original SAM paper.
+            weight_dice: the scaling factor for the dice loss. Defaults to 1 per
+                the original SAM paper.
+
+
+        Returns:
+            The mask segmentation loss.
+        """
+        super().__init__()
+        self.dice_loss = DiceLoss(
+            sigmoid=True, squared_pred=True, reduction="mean"
+        )
+        self.focal_loss = FocalLoss(use_softmax=False, reduction="mean")
+        self.weight_focal = weight_focal
+        self.weight_dice = weight_dice
+
+    def __call__(
+        self,
+        pred_masks: torch.Tensor,
+        gold_masks: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute the segmentation loss.
+
+        Args:
+            pred_masks: The masks predicted by SAM, with shape
+                (batch_size, channel, height, width).
+            gold_masks: the ground truth masks for each candidate term, with shape
+                (batch_size, channel, height, width)
+        Returns:
+            The segmentation loss value.
+        """
+
+        dice = self.dice_loss(pred_masks, gold_masks)
+        focal = self.focal_loss(pred_masks, gold_masks)
+
+        return self.weight_focal * focal + self.weight_dice * dice
+
+
+class CombinedLoss(Loss):
+
+    contrastive_loss: ContrastiveLoss
+    segmentation_loss: SegmentationLoss
+
+    def __init__(
+        self,
+        weight_contrastive: float,
+        weight_segmentation: float,
+        contrastive_loss: ContrastiveLoss,
+        segmentation_loss: SegmentationLoss,
+    ):
+        """Initializes the combined loss, which is just the sum of the
+        contrastive and segmentation losses.
+
+        Args:
+            weight_contrastive (float): The weight for the contrastive loss.
+            weight_segmentation (float): The weight for the segmentation loss.
+            contrastive_loss (ContrastiveLoss): The contrastive loss. See
+                ContrastiveLoss args for detailed description of parameters.
+            segmentation_loss (SegmentationLoss): The segmentation loss. See
+                SegmentationLoss args for detailed description of parameters.
+        """
+
+        super().__init__()
+        self.weight_contrastive = weight_contrastive
+        self.weight_segmentation = weight_segmentation
+        self.contrastive_loss = contrastive_loss
+        self.segmentation_loss = segmentation_loss
+
+    def __call__(
+        self,
+        roi_embeddings: torch.Tensor,
+        candidate_embeddings: torch.Tensor,
+        predicted_masks: torch.Tensor,
+        y_true: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute the combined segmentation and contrastive loss.
+
+        Args:
+            roi_embeddings: The embeddings of each region of interest, with
+                shape (batch_size * num_rois, embedding_size).
+            candidate_embeddings: The embeddings for each candidate item, with
+                shape (num_candidates, embedding_size) if remove_duplicates is
+                false, (batch_size * num_rois, embedding_size) otherwise.
+            predicted_masks: The segmentation masks predicted by SAM, with shape
+                (batch_size, channel, height, width)
+            y_true: A dictionary containing the field "class_indices", which is a
+                tensor of shape (batch_size * num_rois) containing the indices of
+                the true class for each roi, and a field "gold_mask" containing
+                the ground truth segmentation masks for each concept.
+
+        Returns:
+            The combined loss value.
+        """
+        l1, preds = self.contrastive_loss(
+            roi_embeddings, candidate_embeddings, y_true
+        )
+        gold_masks = y_true["gold_mask"]
+        l2 = self.segmentation_loss(predicted_masks, gold_masks)
+        return (
+            self.weight_contrastive * l1 + self.weight_segmentation * l2,
             preds,
         )

@@ -29,6 +29,7 @@ from transformers import AutoImageProcessor
 from transformers import AutoTokenizer
 from transformers import BatchEncoding
 from utils import RankedLogger
+from itertools import groupby
 
 tqdm.pandas()
 
@@ -180,14 +181,15 @@ class MedGeeseDataModule(LightningDataModule):
         # pulling the original datasets and performing manual preprocessing.
         # For now, all multi-concept datasets have been removed from the
         # v1 dataset directory.
-        img_mask_path = os.path.join(data_dir, 'masks')
+        img_mask_path = os.path.join(data_dir, "ground_truths")
         for root, _, files in os.walk(img_mask_path):
             for file in files:
-                if file.endswith(".npz"):
+                if file.endswith(".npz") and ("MR" not in root and "CT" not in root):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
 
         mega = pd.DataFrame({"File": master_files, "Dataset": folders})
+        print(mega['Dataset'].value_counts())
 
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
@@ -234,10 +236,10 @@ class MedGeeseDataModule(LightningDataModule):
             else:
                 # It is possible for images to be RGB and masks to
                 # be greyscale/2D arrays. To check shape agreement,
-                #only check the first and second shapes
+                # only check the first and second shapes
                 assert (
-                    img.shape[0] == mask.shape[0] and
-                    img.shape[1] == mask.shape[1]
+                    img.shape[0] == mask.shape[0]
+                    and img.shape[1] == mask.shape[1]
                 ), f"Image and mask shapes do not match. Got (image) \
                     {img.shape=} and (mask) {mask.shape=}."
                 imgs = [img]
@@ -296,11 +298,17 @@ class MedGeeseDataModule(LightningDataModule):
                         .convert("RGB")
                         .resize((224, 224), Image.LANCZOS)
                     )
-                    mask = (
-                        Image.fromarray(mask)
-                        .convert("RGB")
-                        .resize((224, 224), Image.LANCZOS)
+                    mask = Image.fromarray(mask).resize(
+                        (224, 224), Image.LANCZOS
                     )
+
+                    # Lanczos interpolation does not preserve binary nature of
+                    # masks, so must threshold after. Conversion to numpy speeds
+                    # up this process.
+                    mask = np.array(mask)
+                    mask[mask >= int(np.median(np.unique(mask)))] = 1
+                    mask[mask != 1] = 0
+                    mask = Image.fromarray(mask).convert("RGB")
 
                     # TODO(liamhebert): Ensure that files are saved in a somewhat
                     # standardized way to match the rest of the datasets. For
@@ -362,32 +370,46 @@ class MedGeeseDataModule(LightningDataModule):
 
         tensor_dir = self.hparams.tensor_dir  # type: ignore
         examples = list(glob(tensor_dir + "/*.pt"))
+        # Group datapoints by case to ensure no data leakage happens
+        by_case = [
+            list(i)
+            for j, i in groupby(
+                examples, lambda x: os.path.basename(x).split("-")[0]
+            )
+        ]
         train, val, test = self.hparams.train_val_test_split  # type: ignore
         train_set, val_test_set = train_test_split(
-            examples, train_size=train, test_size=val + test
+            by_case, train_size=train, test_size=val + test
         )
         val_set, test_set = train_test_split(
             val_test_set, test_size=test / (val + test)
         )
 
+        # Flatten cases into final lists. The size ratios will likely not be exact
+        # to the desired ratios, but the goal is to get a relatively even amount
+        # through random splitting.
+        final_train_set = [slice for case in train_set for slice in case]
+        final_test_set = [slice for case in test_set for slice in case]
+        final_val_set = [slice for case in val_set for slice in case]
+
         if self._train_dataset is None:
             # make training dataset
             self._train_dataset = MedGeeseDataset(
-                items=train_set,
+                items=final_train_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=False,
             )
         if self._val_dataset is None:
             # make validation dataset
             self._val_dataset = MedGeeseDataset(
-                items=val_set,
+                items=final_val_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=False,
             )
         if self._test_dataset is None:
             # Make test dataset
             self._test_dataset = MedGeeseDataset(
-                items=test_set,
+                items=final_test_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=True,
             )

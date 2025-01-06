@@ -51,10 +51,17 @@ class MaskDecoder(nn.Module):
         self.mask_tokens = nn.Embedding(self.num_mask_tokens, transformer_dim)
 
         self.output_upscaling = nn.Sequential(
-            nn.ConvTranspose2d(transformer_dim, transformer_dim // 4, kernel_size=2, stride=2),
+            nn.ConvTranspose2d(
+                transformer_dim, transformer_dim // 4, kernel_size=2, stride=2
+            ),
             LayerNorm2d(transformer_dim // 4),
             activation(),
-            nn.ConvTranspose2d(transformer_dim // 4, transformer_dim // 8, kernel_size=2, stride=2),
+            nn.ConvTranspose2d(
+                transformer_dim // 4,
+                transformer_dim // 8,
+                kernel_size=2,
+                stride=2,
+            ),
             activation(),
         )
         self.output_hypernetworks_mlps = nn.ModuleList(
@@ -65,7 +72,10 @@ class MaskDecoder(nn.Module):
         )
 
         self.iou_prediction_head = MLP(
-            transformer_dim, iou_head_hidden_dim, self.num_mask_tokens, iou_head_depth
+            transformer_dim,
+            iou_head_hidden_dim,
+            self.num_mask_tokens,
+            iou_head_depth,
         )
 
     def forward(
@@ -74,6 +84,7 @@ class MaskDecoder(nn.Module):
         image_pe: torch.Tensor,
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
+        text_embeddings: torch.Tensor,
         multimask_output: bool,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -84,6 +95,7 @@ class MaskDecoder(nn.Module):
           image_pe (torch.Tensor): positional encoding with the shape of image_embeddings
           sparse_prompt_embeddings (torch.Tensor): the embeddings of the points and boxes
           dense_prompt_embeddings (torch.Tensor): the embeddings of the mask inputs
+          text_embeddings (torch.Tensor): the embeddings of the text [CLS] tokens
           multimask_output (bool): Whether to return multiple masks or a single
             mask.
 
@@ -91,11 +103,12 @@ class MaskDecoder(nn.Module):
           torch.Tensor: batched predicted masks
           torch.Tensor: batched predictions of mask quality
         """
-        masks, iou_pred = self.predict_masks(
+        masks, iou_pred, mask_embeddings = self.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=image_pe,
             sparse_prompt_embeddings=sparse_prompt_embeddings,
             dense_prompt_embeddings=dense_prompt_embeddings,
+            text_embeddings=text_embeddings,
         )
 
         # Select the correct mask or masks for output
@@ -104,10 +117,11 @@ class MaskDecoder(nn.Module):
         else:
             mask_slice = slice(0, 1)
         masks = masks[:, mask_slice, :, :]
+        mask_embeddings = mask_embeddings[:, mask_slice, :]
         iou_pred = iou_pred[:, mask_slice]
 
         # Prepare output
-        return masks, iou_pred
+        return masks, iou_pred, mask_embeddings
 
     def predict_masks(
         self,
@@ -115,38 +129,55 @@ class MaskDecoder(nn.Module):
         image_pe: torch.Tensor,
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
+        text_embeddings: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Predicts masks. See 'forward' for more details."""
         # Concatenate output tokens
-        output_tokens = torch.cat([self.iou_token.weight, self.mask_tokens.weight], dim=0)
-        output_tokens = output_tokens.unsqueeze(0).expand(sparse_prompt_embeddings.size(0), -1, -1)
-        tokens = torch.cat((output_tokens, sparse_prompt_embeddings), dim=1)
-
-        # Expand per-image data in batch direction to be per-mask
-        src = torch.repeat_interleave(image_embeddings, tokens.shape[0], dim=0)
+        output_tokens = torch.cat(
+            [self.iou_token.weight, self.mask_tokens.weight], dim=0
+        )
+        # Get output tokens in desired dimensions
+        output_tokens = output_tokens.unsqueeze(0).expand(
+            sparse_prompt_embeddings.size(0), -1, -1
+        )
+        tokens = torch.cat(
+            (output_tokens, sparse_prompt_embeddings, text_embeddings), dim=1
+        )
+        # Expand per-image data in batch direction to be per-mask. This only
+        # needs to be done if a single image is passed in, for which we are
+        # predicting multiple masks. In this case
+        if image_embeddings.shape[0] == 1:
+            src = torch.repeat_interleave(
+                image_embeddings, tokens.shape[0], dim=0
+            )
+        else:
+            src = image_embeddings
+        
+        pos_src = image_pe
         src = src + dense_prompt_embeddings
-        pos_src = torch.repeat_interleave(image_pe, tokens.shape[0], dim=0)
         b, c, h, w = src.shape
-
         # Run the transformer
         hs, src = self.transformer(src, pos_src, tokens)
         iou_token_out = hs[:, 0, :]
         mask_tokens_out = hs[:, 1 : (1 + self.num_mask_tokens), :]
-
         # Upscale mask embeddings and predict masks using the mask tokens
         src = src.transpose(1, 2).view(b, c, h, w)
         upscaled_embedding = self.output_upscaling(src)
         hyper_in_list: List[torch.Tensor] = []
         for i in range(self.num_mask_tokens):
-            hyper_in_list.append(self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :]))
+            hyper_in_list.append(
+                self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :])
+            )
         hyper_in = torch.stack(hyper_in_list, dim=1)
         b, c, h, w = upscaled_embedding.shape
-        masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
+        masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(
+            b, -1, h, w
+        )
 
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
 
-        return masks, iou_pred
+        return masks, iou_pred, mask_tokens_out
 
 
 # Lightly adapted from

@@ -42,6 +42,7 @@ class ClipMedGeese(TwoTowerEncoder):
                 size of 14.
         """
         super().__init__()
+        self.text_model_path = text_model_path
         self.text_model = AutoModel.from_pretrained(text_model_path)
         if is_clip:
             self.vision_model = CLIPVisionModel.from_pretrained(
