@@ -13,6 +13,10 @@ import torch
 from torch import nn
 from torchmetrics import MaxMetric
 from torchmetrics import MeanMetric
+from torchmetrics import MinMetric
+from torchmetrics import F1Score
+from torchmetrics import Precision
+from torchmetrics import Recall
 import os
 import json
 
@@ -54,7 +58,7 @@ class Model(pl.LightningModule):
     train_loss: MeanMetric
     val_loss: MeanMetric
     test_loss: MeanMetric
-    val_loss_best: MaxMetric
+    val_loss_best: MinMetric
 
     def __init__(
         self,
@@ -105,7 +109,7 @@ class Model(pl.LightningModule):
         self.test_loss = MeanMetric()
 
         # for tracking best so far validation accuracy
-        self.val_loss_best = MaxMetric()
+        self.val_loss_best = MinMetric()
 
         data_dir = os.path.join(self.hparams.data_dir, "v1")
         umls_path = data_dir
@@ -118,6 +122,14 @@ class Model(pl.LightningModule):
         for key in umls_terms.keys():
             reverse_term_dict[umls_terms[key]["idx"]] = key
         self.reverse_term_dict = reverse_term_dict
+
+        self.f1 = F1Score(task="multiclass", num_classes=len(reverse_term_dict.keys()))
+        self.precision = Precision(task='multiclass', num_classes=len(reverse_term_dict.keys()))
+        self.recall = Recall(task='multiclass', num_classes=len(reverse_term_dict.keys()))
+
+        self.label_f1 = F1Score(task="multiclass", num_classes=len(reverse_term_dict.keys()), average='none')
+        self.label_precision = Precision(task="multiclass", num_classes=len(reverse_term_dict.keys()), average='none')
+        self.label_recall = Recall(task="multiclass", num_classes=len(reverse_term_dict.keys()), average='none')
 
     def forward(
         self, x: dict[str, torch.Tensor]
@@ -150,7 +162,6 @@ class Model(pl.LightningModule):
         x, y = batch["x"], batch["y"]
         outs = self.forward(x)
         loss, preds = self.loss(*outs, y)
-
         return loss, preds, y
 
     def on_train_start(self) -> None:
@@ -165,30 +176,61 @@ class Model(pl.LightningModule):
 
     def calculate_metrics(self, pred, labels, mode):
         # classification metrics
-        batch_preds = pred
+        gts = labels['class_indices']
+        batch_preds = gts[pred]
         batch_labels = labels["class_indices"]
         correct = torch.eq(batch_preds, batch_labels)
         num_correct = correct.float().sum()
+        f1 = self.f1(batch_preds, batch_labels)
+        recall = self.recall(batch_preds, batch_labels)
+        precision = self.precision(batch_preds, batch_labels)
+        num_total = batch_labels.shape[0]
+
+        self.log(
+                f"{mode}/full_precision",
+                precision,
+                prog_bar=True,
+                on_step=True,
+                on_epoch=True,
+                batch_size=num_total,
+                sync_dist=True,
+            )
+        self.log(
+                f"{mode}/full_recall",
+                recall,
+                prog_bar=True,
+                on_step=True,
+                on_epoch=True,
+                batch_size=num_total,
+                sync_dist=True,
+            )
+        self.log(
+                f"{mode}/full_f1",
+                f1,
+                prog_bar=True,
+                on_step=True,
+                on_epoch=True,
+                batch_size=num_total,
+                sync_dist=True,
+            )
 
         for i in batch_labels.unique():
-            num_label_correct = torch.logical_and(
-                (batch_preds == batch_labels), (batch_labels == i)
-            ).sum()
+            # Compute metrics per-label
+            f1 = self.label_f1(batch_preds, batch_labels)[i]
+            precision = self.label_precision(batch_preds, batch_labels)[i]
+            recall = self.label_recall(batch_preds, batch_labels)[i]
             num_label_total = (batch_labels == i).sum()
-            num_label_pred = (batch_preds == i).sum()
-            if (
-                num_label_correct == 0
-                or num_label_pred == 0
-                or num_label_total == 0
-            ):
-                precision = torch.tensor(0.0).float()
-                recall = torch.tensor(0.0).float()
-                f1 = torch.tensor(0.0).float()
-            else:
-                precision = num_label_correct / num_label_pred
-                recall = num_label_correct / num_label_total
-                f1 = 2 * (precision * recall) / (precision + recall)
 
+            self.log(
+                f"{mode}/weight/{self.reverse_term_dict[int(i)]}",
+                num_label_total.to(torch.float32),
+                reduce_fx=sum,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=num_label_total,
+                sync_dist=True,
+            )
             self.log(
                 f"{mode}/f1/{self.reverse_term_dict[int(i)]}",
                 f1,
@@ -217,8 +259,6 @@ class Model(pl.LightningModule):
                 sync_dist=True,
             )
 
-        num_total = batch_labels.shape[0]
-
         # accuracy
         acc = num_correct / num_total
         self.log(
@@ -230,7 +270,6 @@ class Model(pl.LightningModule):
             sync_dist=True,
         )
 
-        ...
 
     def training_step(
         self, batch: dict[str, dict[str, torch.Tensor]], batch_idx: int
