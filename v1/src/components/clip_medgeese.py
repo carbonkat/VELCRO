@@ -12,6 +12,7 @@ from transformers import ViTModel
 from transformers import CLIPTextModelWithProjection
 from transformers import CLIPVisionModelWithProjection
 
+
 class ClipMedGeese(TwoTowerEncoder):
     """
     Model that matches patch embeddings to text embeddings, similar to CLIP.
@@ -58,9 +59,11 @@ class ClipMedGeese(TwoTowerEncoder):
                 self.vision_model.vision_model.post_layernorm
             )
             self.vision_projection = self.vision_model.visual_projection
-            self.text_model = CLIPTextModelWithProjection.from_pretrained(text_model_path)
-            #text_embedding_dim = self.text_model.config.hidden_size
-            #vision_embedding_dim = self.vision_model.config.hidden_size
+            self.text_model = CLIPTextModelWithProjection.from_pretrained(
+                text_model_path
+            )
+            # text_embedding_dim = self.text_model.config.hidden_size
+            # vision_embedding_dim = self.vision_model.config.hidden_size
         else:
             self.vision_model = ViTModel.from_pretrained(vision_model_path)
             self.vision_layer_norm = nn.Identity()
@@ -68,7 +71,9 @@ class ClipMedGeese(TwoTowerEncoder):
             text_embedding_dim = self.text_model.config.hidden_size
             vision_embedding_dim = self.vision_model.config.hidden_size
             self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
-            self.vision_projection = nn.Linear(vision_embedding_dim, projection_dim)
+            self.vision_projection = nn.Linear(
+                vision_embedding_dim, projection_dim
+            )
 
         self.text_model
         self.vision_model
@@ -98,7 +103,7 @@ class ClipMedGeese(TwoTowerEncoder):
         self.expand_mask_kernel.weight = nn.Parameter(
             torch.ones_like(self.expand_mask_kernel.weight), requires_grad=False
         )
-        '''
+        """
         self.text_model_path = text_model_path
         self.text_model = AutoModel.from_pretrained(text_model_path)
         if is_clip:
@@ -150,7 +155,7 @@ class ClipMedGeese(TwoTowerEncoder):
         self.expand_mask_kernel.weight = nn.Parameter(
             torch.ones_like(self.expand_mask_kernel.weight), requires_grad=False
         )
-        '''
+        """
 
     def forward(
         self, candidate_input: dict[str, Tensor], image_input: dict[str, Tensor]
@@ -202,8 +207,8 @@ class ClipMedGeese(TwoTowerEncoder):
         # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
 
-        #candidate_embed = self.text_model(**candidate_input).pooler_output
-        #candidate_embed = self.text_projection(candidate_embed)
+        # candidate_embed = self.text_model(**candidate_input).pooler_output
+        # candidate_embed = self.text_projection(candidate_embed)
         if not self.is_clip:
             candidate_embed = self.text_model(**candidate_input).pooler_output
             candidate_embed = self.text_projection(candidate_embed)

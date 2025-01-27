@@ -1,9 +1,10 @@
 defaults:
   - default
 
-strategy: "ddp_find_unused_parameters_true"
+# strategy: "ddp_find_unused_parameters_true"
+strategy: "fsdp"
 
 accelerator: gpu
-devices: 4
+devices: 2
 num_nodes: 1
 sync_batchnorm: True

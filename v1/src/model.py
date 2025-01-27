@@ -21,6 +21,7 @@ import json
 from transformers import AutoTokenizer
 from transformers import CLIPTokenizer
 from transformers import AutoModel
+
 """
 from torchmetrics import Metric
 
@@ -133,7 +134,9 @@ class Model(pl.LightningModule):
         with open(umls_path + "/" + "UMLS_formatted.json") as json_file:
             umls_terms = json.load(json_file)
         if "openai" in self.encoder.text_model_path:
-            text_tokenizer=CLIPTokenizer.from_pretrained(self.encoder.text_model_path)
+            text_tokenizer = CLIPTokenizer.from_pretrained(
+                self.encoder.text_model_path
+            )
         else:
             text_tokenizer = AutoTokenizer.from_pretrained(
                 self.encoder.text_model_path
@@ -146,8 +149,8 @@ class Model(pl.LightningModule):
         self.tokenized_umls = text_tokenizer(
             umls_text, return_tensors="pt", padding=True, truncation=True
         )
-        #self.tokenized_umls.to(device)
-        #print(self.tokenized_umls['input_ids'].shape)
+        # self.tokenized_umls.to(device)
+        # print(self.tokenized_umls['input_ids'].shape)
 
         # This makes the dict keys indices and the values the name of the
         # corresponding class. Used for classification metrics.
@@ -171,14 +174,37 @@ class Model(pl.LightningModule):
             num_classes=len(reverse_term_dict.keys()),
             average="macro",
         )
-        self.val_f1 = F1Score(task="multiclass", num_classes=len(reverse_term_dict.keys()), average="macro")
-        self.val_prec = Precision(task="multiclass", num_classes=len(reverse_term_dict.keys()), average="macro")
-        self.val_rec = Recall(task="multiclass", num_classes=len(reverse_term_dict.keys()), average="macro")
-        
-        self.test_f1 = F1Score(task="multiclass", num_classes=len(reverse_term_dict.keys()), average="macro")
-        self.test_prec = Precision(task="multiclass", num_classes=len(reverse_term_dict.keys()), average="macro")
-        self.test_rec = Recall(task="multiclass", num_classes=len(reverse_term_dict.keys()), average="macro")
+        self.val_f1 = F1Score(
+            task="multiclass",
+            num_classes=len(reverse_term_dict.keys()),
+            average="macro",
+        )
+        self.val_prec = Precision(
+            task="multiclass",
+            num_classes=len(reverse_term_dict.keys()),
+            average="macro",
+        )
+        self.val_rec = Recall(
+            task="multiclass",
+            num_classes=len(reverse_term_dict.keys()),
+            average="macro",
+        )
 
+        self.test_f1 = F1Score(
+            task="multiclass",
+            num_classes=len(reverse_term_dict.keys()),
+            average="macro",
+        )
+        self.test_prec = Precision(
+            task="multiclass",
+            num_classes=len(reverse_term_dict.keys()),
+            average="macro",
+        )
+        self.test_rec = Recall(
+            task="multiclass",
+            num_classes=len(reverse_term_dict.keys()),
+            average="macro",
+        )
 
         self.label_f1 = F1Score(
             task="multiclass",
@@ -196,8 +222,8 @@ class Model(pl.LightningModule):
             average="none",
         )
 
-        #self.testing_output_preds = []
-        #self.testing_output_labels = []
+        # self.testing_output_preds = []
+        # self.testing_output_labels = []
 
     def forward(
         self, x: dict[str, torch.Tensor]
@@ -229,7 +255,7 @@ class Model(pl.LightningModule):
         """
         x, y = batch["x"], batch["y"]
         outs = self.forward(x)
-        #print("candidate embed shape", outs[0].shape)
+        # print("candidate embed shape", outs[0].shape)
         loss, preds = self.loss(*outs, y)
         # (loss)
         return loss, preds, y
@@ -244,7 +270,7 @@ class Model(pl.LightningModule):
         self.val_loss.reset()
         self.val_loss_best.reset()
 
-    #def on_validation_epoch_start(self) -> None:
+    # def on_validation_epoch_start(self) -> None:
     #    print("validation start gothere!")
     #    self.loss.remove_duplicates=False
     #    self.tokenized_umls.to(self.device)
@@ -256,10 +282,10 @@ class Model(pl.LightningModule):
         # by default lightning executes validation step sanity checks before
         # training starts, so it's worth to make sure validation metrics don't
         # store results from these checks
-        self.loss.remove_duplicates=False
-        #self.tokenized_umls.to(self.device)
+        self.loss.remove_duplicates = False
+        # self.tokenized_umls.to(self.device)
 
-    '''
+    """
     #def on_test_epoch_end(self) -> None:
         all_preds = torch.cat(self.testing_output_preds, dim=0)
         all_labels = torch.cat(self.testing_output_labels, dim=0)
@@ -316,25 +342,26 @@ class Model(pl.LightningModule):
             on_epoch=True,
             sync_dist=True,
         )
-    '''
+    """
+
     def calculate_metrics(self, pred, labels, mode):
         """
         docstring here
         """
         # classification metrics
         gts = labels["class_indices"]
-        #batch_preds = gts[pred]
+        # batch_preds = gts[pred]
         if not self.loss.remove_duplicates:
-            batch_preds=pred
+            batch_preds = pred
         else:
-            batch_preds=gts[pred]
+            batch_preds = gts[pred]
 
         batch_labels = labels["class_indices"]
         correct = torch.eq(batch_preds, batch_labels)
         num_correct = correct.float().sum()
-        #self.f1(batch_preds, batch_labels)
-        #self.recall(batch_preds, batch_labels)
-        #self.precision(batch_preds, batch_labels)
+        # self.f1(batch_preds, batch_labels)
+        # self.recall(batch_preds, batch_labels)
+        # self.precision(batch_preds, batch_labels)
         num_total = batch_labels.shape[0]
 
         if mode == "val":
@@ -421,12 +448,12 @@ class Model(pl.LightningModule):
                 on_epoch=True,
                 batch_size=num_total,
             )
-            #print("before batchifying!", pred)
-            #print("after batchifying!", batch_preds)
-            #print("ground truths!", gts)
+            # print("before batchifying!", pred)
+            # print("after batchifying!", batch_preds)
+            # print("ground truths!", gts)
         #    self.testing_output_preds.append(batch_preds)
         #    self.testing_output_labels.append(batch_labels)
-        '''
+        """
         self.log(
             f"{mode}/full_precision",
             self.precision,
@@ -454,7 +481,7 @@ class Model(pl.LightningModule):
             batch_size=num_total,
             #sync_dist=True,
         )
-        '''
+        """
         self.log(
             f"{mode}/unique_batch_labels",
             len(batch_labels.unique()),
@@ -463,7 +490,7 @@ class Model(pl.LightningModule):
             on_epoch=False,
             sync_dist=True,
         )
-        '''
+        """
         f1 = self.label_f1(batch_preds, batch_labels)  # [i]
         precision = self.label_precision(batch_preds, batch_labels)  # [i]
         recall = self.label_recall(batch_preds, batch_labels)  # [i]
@@ -508,7 +535,7 @@ class Model(pl.LightningModule):
                 batch_size=num_label_total,
                 sync_dist=True,
             )
-            '''
+            """
         # accuracy
         acc = num_correct / num_total
         self.log(
@@ -562,13 +589,13 @@ class Model(pl.LightningModule):
                 to have a shape of (batch_size, ...).
             batch_idx: The index of the batch.
         """
-        #print("validation before model step!")
-        self.loss.remove_duplicates=False
-        batch['x']['candidate_input'] = self.tokenized_umls.to(self.device)
+        # print("validation before model step!")
+        self.loss.remove_duplicates = False
+        batch["x"]["candidate_input"] = self.tokenized_umls.to(self.device)
         loss, preds, targets = self.model_step(batch)
-        #print(preds.shape)
-        #print(preds)
-        #print("validation after model step!")
+        # print(preds.shape)
+        # print(preds)
+        # print("validation after model step!")
         # update and log metrics
         self.val_loss(loss)
         self.log(
@@ -577,9 +604,9 @@ class Model(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            #sync_dist=True,
+            # sync_dist=True,
         )
-        #print("validation before calculating metrics!")
+        # print("validation before calculating metrics!")
         self.calculate_metrics(preds, targets, "val")
 
     def on_validation_epoch_end(self) -> None:
@@ -592,10 +619,10 @@ class Model(pl.LightningModule):
         self.log(
             "val/loss_best",
             self.val_loss_best.compute(),
-            #sync_dist=True,
+            # sync_dist=True,
             prog_bar=True,
         )
-        self.loss.remove_duplicates=True
+        self.loss.remove_duplicates = True
 
     def test_step(
         self, batch: dict[str, dict[str, torch.Tensor]], batch_idx: int
@@ -611,7 +638,7 @@ class Model(pl.LightningModule):
         Returns:
             The loss value for that batch, using self.loss.
         """
-        batch['x']['candidate_input'] = self.tokenized_umls
+        batch["x"]["candidate_input"] = self.tokenized_umls
         loss, preds, targets = self.model_step(batch)
         self.test_loss(loss)
         self.log(
@@ -620,7 +647,7 @@ class Model(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            #sync_dist=True,
+            # sync_dist=True,
         )
         self.calculate_metrics(preds, targets, "test")
         return loss

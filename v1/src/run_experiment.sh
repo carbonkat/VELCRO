@@ -1,5 +1,5 @@
 #!/bin/bash
-    
+
 # To be submitted to the SLURM queue with the command:
 # sbatch batch-submit.sh
 
@@ -8,7 +8,7 @@
 #SBATCH --time=48:00:00
 #SBATCH --mem=32GB
 #SBATCH --cpus-per-task=8
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:2
 #SBATCH --partition=ALL
 
 # Set output file destinations (optional)
@@ -26,5 +26,5 @@
 
 # Task to run
 
-export PROJECT_ROOT='.' 
+export PROJECT_ROOT='.'
 bash run_exp.sh

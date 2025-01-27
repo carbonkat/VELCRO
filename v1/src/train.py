@@ -19,9 +19,10 @@ from utils import instantiate_loggers
 from utils import log_hyperparameters
 from utils import RankedLogger
 from utils import task_wrapper
+import torch
 
 log = RankedLogger(__name__, rank_zero_only=True)
-
+torch.set_float32_matmul_precision("medium")
 
 @task_wrapper
 def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:

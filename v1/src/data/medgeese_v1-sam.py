@@ -72,15 +72,14 @@ def collate_fn(data):
 
     new_image_input = dict()
     for key in data[0]["x"]["image_input"]:
-        new_image_input[key] = torch.squeeze(
-            torch.stack([d["x"]["image_input"][key] for d in data], dim=0)
+        new_image_input[key] = torch.cat(
+            [d["x"]["image_input"][key] for d in data], dim=0
         )
-
     bounding_boxes = [
         torch.permute(d["x"]["bounding_boxes"], (1, 2, 0)) for d in data
     ]
-    bounding_boxes = torch.squeeze(
-        pad_sequence(bounding_boxes, batch_first=True)
+    bounding_boxes = pad_sequence(bounding_boxes, batch_first=True).squeeze(
+        dim=-1
     )
     class_indices = torch.stack(
         ([d["y"]["class_indices"] for d in data]), dim=0
@@ -246,8 +245,8 @@ class MedGeeseDataModule(LightningDataModule):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
 
-        #master_files = master_files[0:25000]
-        #folders = folders[0:25000]
+        # master_files = master_files[0:25000]
+        # folders = folders[0:25000]
         mega = pd.DataFrame({"File": master_files, "Dataset": folders})
 
         mega["index"] = 1
@@ -450,12 +449,12 @@ class MedGeeseDataModule(LightningDataModule):
             if count == 18:
                 gliomas.append(i)
             all_check.append(count)
-        removed_gliomas = random.sample(gliomas, int(len(gliomas)/2))
+        removed_gliomas = random.sample(gliomas, int(len(gliomas) / 2))
         print("number of gliomas to remove", len(removed_gliomas))
-        #temp = [x for x in examples if x not in removed_gliomas]
-        #print("done removing")
-        #examples = temp
-        new_dataset_size = int(len(examples)-len(removed_gliomas))
+        # temp = [x for x in examples if x not in removed_gliomas]
+        # print("done removing")
+        # examples = temp
+        new_dataset_size = int(len(examples) - len(removed_gliomas))
         print("new dataset size", new_dataset_size)
         # Group datapoints by case to ensure no data leakage happens
         by_case = [
@@ -508,11 +507,18 @@ class MedGeeseDataModule(LightningDataModule):
         sample_weights = [0] * len(c)
         for i in range(len(c)):
             sample_weights[i] = weights[c[i]]
-        new_dataset_size = new_dataset_size - len(final_test_set) - len(final_val_set)
+        new_dataset_size = (
+            new_dataset_size - len(final_test_set) - len(final_val_set)
+        )
         print(new_dataset_size)
-        self.sampler = WeightedRandomSampler(sample_weights, replacement=True, num_samples=new_dataset_size) #len(sample_weights))
-        self.distributed_sampler = DistributedSamplerWrapper(self.sampler, num_replicas=4, shuffle=False)
-        '''
+        self.sampler = WeightedRandomSampler(
+            sample_weights, replacement=True, num_samples=new_dataset_size
+        )  # len(sample_weights))
+        self.distributed_sampler = self.sampler
+        # self.distributed_sampler = DistributedSamplerWrapper(
+        #     self.sampler, num_replicas=torch.cuda.device_count(), shuffle=False
+        # )
+        """
         tensor_dir = self.hparams.tensor_dir  # type: ignore
         examples = list(glob(tensor_dir + "/*.pt"))
         # Group datapoints by case to ensure no data leakage happens
@@ -536,7 +542,7 @@ class MedGeeseDataModule(LightningDataModule):
         final_train_set = [slice for case in train_set for slice in case]
         final_test_set = [slice for case in test_set for slice in case]
         final_val_set = [slice for case in val_set for slice in case]
-        '''
+        """
         if self._train_dataset is None:
             # make training dataset
             self._train_dataset = MedGeeseDataset(
@@ -640,7 +646,7 @@ class MedGeeseDataset(Dataset):
             A dictionary mapping keys to torch tensors. It is expected that the
             tensors have a shape of (batch_size, ...).
         """
-        (img, mask, label, candidate_text, bboxes) = torch.load(self.items[idx])
+        (img, mask, label, candidate_text, bboxes) = torch.load(self.items[idx], weights_only=False)
         assert isinstance(img, Image.Image), f"{type(img)=}"
         assert isinstance(mask, Image.Image), f"{type(mask)=}"
         assert isinstance(label, torch.Tensor), f"{type(label)=}"
@@ -648,7 +654,7 @@ class MedGeeseDataset(Dataset):
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
         assert isinstance(bboxes, list), f"{type(bboxes)=}"
 
-        #mask = tv.Mask(mask)
+        # mask = tv.Mask(mask)
         mask = tv.Mask(mask).to(torch.int32)
         img = tv.Image(img)
         bboxes = tv.BoundingBoxes(

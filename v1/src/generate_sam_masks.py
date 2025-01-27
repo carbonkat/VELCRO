@@ -25,7 +25,9 @@ def main():
     mask_dir = "./data/dataset_files/v1/masks"
 
     # TODO(carbonkat): make this path dynamic
-    sam = sam_model_registry["vit_b"](checkpoint="./segment_anything/checkpoints/sam_vit_b.pth")
+    sam = sam_model_registry["vit_b"](
+        checkpoint="./segment_anything/checkpoints/sam_vit_b.pth"
+    )
     sam.to(device="cuda")
     mask_predictor = SamPredictor(sam)
 
@@ -69,7 +71,7 @@ def main():
             continue
 
         data_dict = {"imgs": img}
-        #print(img.shape, original_mask.shape)
+        # print(img.shape, original_mask.shape)
         # If a 3D volume, get image and mask slices for
         # each timestep.
         if len(img.shape) > 2 and img.shape[2] != 3:
@@ -110,7 +112,7 @@ def main():
                 new_masks.append(m)
 
             blank_canvas = np.zeros_like(mask)
-            #print(blank_canvas.shape, len(new_masks))
+            # print(blank_canvas.shape, len(new_masks))
             # Iterate through each mask and gradually add to
             # the full reconstructed mask. NOTE: this assumes
             # all segmentations belong to the same concept.
@@ -118,11 +120,11 @@ def main():
                 blank_canvas[m != 0] = 255
             all_masks.append(blank_canvas)
 
-        final_mask = np.asarray(all_masks) #.squeeze()
+        final_mask = np.asarray(all_masks)  # .squeeze()
         if len(original_mask.shape) == 2:
             final_mask = final_mask.squeeze()
-        #print(np.unique(final_mask))
-        #print("final mask shape", final_mask.shape, original_mask.shape)
+        # print(np.unique(final_mask))
+        # print("final mask shape", final_mask.shape, original_mask.shape)
         assert final_mask.shape == original_mask.shape
         data_dict["gts"] = final_mask
         np.savez(
