@@ -101,7 +101,8 @@ def extract_2d_masks(
         {image.shape=} and (mask) {mask.shape=}."
 
     for i in range(mask.shape[0]):
-        if len(np.unique(mask[i])) == 1:
+        if len(np.unique(mask[i])) == 1 and np.unique(mask[i])[0] == 0:
+            print("gothere!")
             continue
         else:
             images.append(image[i])

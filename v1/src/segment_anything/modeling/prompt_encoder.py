@@ -105,8 +105,13 @@ class PromptEncoder(nn.Module):
 
     def _embed_boxes(self, boxes: torch.Tensor) -> torch.Tensor:
         """Embeds box prompts."""
+        print("boxes", boxes.shape)
+        batch_size, nb_boxes = boxes.shape[:2]
         boxes = boxes + 0.5  # Shift to center of pixel
-        coords = boxes.reshape(-1, 2, 2)
+        coords = boxes.reshape(batch_size, nb_boxes, 2, 2)
+        input_shape = (self.input_image_size, self.input_image_size)
+        #coords = boxes.reshape(-1, 2, 2)
+        print(coords.shape)
         corner_embedding = self.pe_layer.forward_with_coords(
             coords, self.input_image_size
         )
@@ -131,6 +136,7 @@ class PromptEncoder(nn.Module):
         if points is not None:
             return points[0].shape[0]
         elif boxes is not None:
+            print(boxes.shape[0])
             return boxes.shape[0]
         elif masks is not None:
             return masks.shape[0]
@@ -164,22 +170,29 @@ class PromptEncoder(nn.Module):
             Bx(embed_dim)x(embed_H)x(embed_W)
         """
         bs = self._get_batch_size(points, boxes, masks)
-        sparse_embeddings = torch.empty(
-            (bs, 0, self.embed_dim), device=self._get_device()
-        )
+        #sparse_embeddings = torch.empty(
+        #    (bs, 0, self.embed_dim), device=self._get_device()
+        #)
+        sparse_embeddings = None
+        print(bs)
         if points is not None:
             coords, labels = points
             point_embeddings = self._embed_points(
                 coords, labels, pad=(boxes is None)
             )
-            sparse_embeddings = torch.cat(
-                [sparse_embeddings, point_embeddings], dim=1
-            )
+            #sparse_embeddings = torch.cat(
+            #    [sparse_embeddings, point_embeddings], dim=1
+            #)
+            sparse_embeddings = point_embeddings
         if boxes is not None:
             box_embeddings = self._embed_boxes(boxes)
-            sparse_embeddings = torch.cat(
-                [sparse_embeddings, box_embeddings], dim=1
-            )
+            print(sparse_embeddings, box_embeddings.shape)
+            if sparse_embeddings is not None:
+                sparse_embeddings = torch.cat(
+                    [sparse_embeddings, box_embeddings], dim=1
+                )
+            else:
+                sparse_embeddings=box_embeddings
 
         if masks is not None:
             dense_embeddings = self._embed_masks(masks)

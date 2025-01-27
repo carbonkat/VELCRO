@@ -31,8 +31,14 @@ from transformers import AutoTokenizer
 from transformers import BatchEncoding
 from utils import RankedLogger
 from skimage.measure import regionprops
+from skimage.measure import label
 from torch.nn.utils.rnn import pad_sequence
 from itertools import groupby
+from torch.utils.data import WeightedRandomSampler
+from torch.utils.data import DistributedSampler
+import random
+from catalyst.data.sampler import DistributedSamplerWrapper
+from skimage.measure import regionprops
 
 tqdm.pandas()
 
@@ -240,8 +246,8 @@ class MedGeeseDataModule(LightningDataModule):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
 
-        master_files = master_files[0:25]
-        folders = folders[0:25]
+        #master_files = master_files[0:25000]
+        #folders = folders[0:25000]
         mega = pd.DataFrame({"File": master_files, "Dataset": folders})
 
         mega["index"] = 1
@@ -352,7 +358,7 @@ class MedGeeseDataModule(LightningDataModule):
                     x_scale = 1024 / mask.size[0]
                     y_scale = 1024 / mask.size[1]
 
-                    bboxes = regionprops(np.asarray(mask))
+                    bboxes = regionprops(label(np.asarray(mask)))
                     # For some reason, resizing the image before
                     # generating bounding boxes causes many more
                     # boxes than expected to be generated, so just
@@ -384,7 +390,7 @@ class MedGeeseDataModule(LightningDataModule):
                     # dictionaries, rather than a tuple.
                     torch.save(
                         (img, mask, y, candidate_text, reordered_boxes),
-                        (f"{tensor_dir}/{index}-{i}.pt"),
+                        (f"{tensor_dir}/{index}-{i}-{y}.pt"),
                     )
 
                 except Exception as e:
@@ -434,7 +440,79 @@ class MedGeeseDataModule(LightningDataModule):
             self._test_device_batch_size = (
                 self.hparams.test_batch_size // self.trainer.world_size
             )
+        tensor_dir = self.hparams.tensor_dir  # type: ignore
+        examples = list(glob(tensor_dir + "/*.pt"))
+        gliomas = []
+        random.seed(42)
+        all_check = []
+        for i in examples:
+            count = int(os.path.basename(i).split("-")[-1].split(".")[0])
+            if count == 18:
+                gliomas.append(i)
+            all_check.append(count)
+        removed_gliomas = random.sample(gliomas, int(len(gliomas)/2))
+        print("number of gliomas to remove", len(removed_gliomas))
+        #temp = [x for x in examples if x not in removed_gliomas]
+        #print("done removing")
+        #examples = temp
+        new_dataset_size = int(len(examples)-len(removed_gliomas))
+        print("new dataset size", new_dataset_size)
+        # Group datapoints by case to ensure no data leakage happens
+        by_case = [
+            list(i)
+            for j, i in groupby(
+                examples, lambda x: os.path.basename(x).split("-")[0]
+            )
+        ]
+        all = []
+        for i in by_case:
+            count = os.path.basename(i[0]).split("-")[-1].split(".")[0]
+            all.append(int(count))
 
+        train, val, test = self.hparams.train_val_test_split  # type: ignore
+        train_set, val_test_set, train_y, val_test_y = train_test_split(
+            by_case,
+            all,
+            train_size=train,
+            test_size=val + test,
+            random_state=42,
+        )
+
+        val_set, test_set, v_y, t_y = train_test_split(
+            val_test_set,
+            val_test_y,
+            test_size=test / (val + test),
+        )
+        # Flatten cases into final lists. The size ratios will likely not be exact
+        # to the desired ratios, but the goal is to get a relatively even amount
+        # through random splitting.
+        final_train_set = [slice for case in train_set for slice in case]
+        final_test_set = [slice for case in test_set for slice in case]
+        final_val_set = [slice for case in val_set for slice in case]
+
+        classes = [
+            int(os.path.basename(i).split("-")[-1].split(".")[0])
+            for i in final_train_set
+        ]
+        for i in set(all):
+            print(i, classes.count(i))
+            print(i, all_check.count(i))
+        c = []
+        for i in final_train_set:
+            count = os.path.basename(i).split("-")[-1].split(".")[0]
+            c.append(int(count))
+
+        weights = [0] * 20
+        for i in set(c):
+            weights[i] = 1 / c.count(i)
+        sample_weights = [0] * len(c)
+        for i in range(len(c)):
+            sample_weights[i] = weights[c[i]]
+        new_dataset_size = new_dataset_size - len(final_test_set) - len(final_val_set)
+        print(new_dataset_size)
+        self.sampler = WeightedRandomSampler(sample_weights, replacement=True, num_samples=new_dataset_size) #len(sample_weights))
+        self.distributed_sampler = DistributedSamplerWrapper(self.sampler, num_replicas=4, shuffle=False)
+        '''
         tensor_dir = self.hparams.tensor_dir  # type: ignore
         examples = list(glob(tensor_dir + "/*.pt"))
         # Group datapoints by case to ensure no data leakage happens
@@ -458,7 +536,7 @@ class MedGeeseDataModule(LightningDataModule):
         final_train_set = [slice for case in train_set for slice in case]
         final_test_set = [slice for case in test_set for slice in case]
         final_val_set = [slice for case in val_set for slice in case]
-
+        '''
         if self._train_dataset is None:
             # make training dataset
             self._train_dataset = MedGeeseDataset(
@@ -489,7 +567,8 @@ class MedGeeseDataModule(LightningDataModule):
         return DataLoader(
             self._train_dataset,
             batch_size=self.hparams.train_batch_size,  # type: ignore
-            shuffle=True,
+            sampler=self.distributed_sampler,
+            shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
             collate_fn=collate_fn,  # type: ignore
         )
@@ -499,9 +578,11 @@ class MedGeeseDataModule(LightningDataModule):
         Return the validation dataloader.
         """
         assert self._val_dataset is not None
+        sampler = DistributedSampler(self._val_dataset)
         return DataLoader(
             self._val_dataset,
             batch_size=self.hparams.train_batch_size,  # type: ignore
+            sampler=sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
             collate_fn=collate_fn,  # type: ignore
@@ -512,10 +593,12 @@ class MedGeeseDataModule(LightningDataModule):
         Return the test dataloader.
         """
         assert self._test_dataset is not None
+        sampler = DistributedSampler(self._test_dataset)
         return DataLoader(
             self._test_dataset,
             batch_size=self.hparams.test_batch_size,  # type: ignore
             shuffle=False,
+            sampler=sampler,
             num_workers=self.hparams.num_workers,  # type: ignore
         )
 
@@ -565,7 +648,8 @@ class MedGeeseDataset(Dataset):
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
         assert isinstance(bboxes, list), f"{type(bboxes)=}"
 
-        mask = tv.Mask(mask)
+        #mask = tv.Mask(mask)
+        mask = tv.Mask(mask).to(torch.int32)
         img = tv.Image(img)
         bboxes = tv.BoundingBoxes(
             bboxes, format="XYXY", canvas_size=mask.shape[1:]

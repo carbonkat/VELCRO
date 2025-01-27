@@ -27,10 +27,15 @@ import torchvision.tv_tensors as tv
 from tqdm import tqdm
 from transformers import AutoImageProcessor
 from transformers import AutoTokenizer
+from transformers import CLIPTokenizer
 from transformers import BatchEncoding
 from utils import RankedLogger
 from itertools import groupby
-
+from torch.utils.data import WeightedRandomSampler
+from torch.utils.data import DistributedSampler
+import random
+from catalyst.data.sampler import DistributedSamplerWrapper
+from skimage.measure import regionprops
 tqdm.pandas()
 
 logger = RankedLogger(__name__)
@@ -92,6 +97,8 @@ class MedGeeseDataModule(LightningDataModule):
         image_model_path: str,
         text_model_path: str,
         debug: bool = False,
+        data_source: str = "ground_truths",
+        crop: bool = False,
     ):
         assert (
             sum(train_val_test_split) == 1.0
@@ -152,16 +159,20 @@ class MedGeeseDataModule(LightningDataModule):
         with open(umls_path + "/" + "UMLS_formatted.json") as json_file:
             umls_terms = json.load(json_file)
 
-        # Tokenize the UMLS terms
-        text_tokenizer = AutoTokenizer.from_pretrained(
-            self.hparams.text_model_path
-        )
+        if "openai" in self.hparams.text_model_path:
+            text_tokenizer = CLIPTokenizer.from_pretrained(self.hparams.text_model_path)
+        else:
+            # Tokenize the UMLS terms
+            text_tokenizer = AutoTokenizer.from_pretrained(
+                self.hparams.text_model_path
+            )
+        print(text_tokenizer)
         # We tokenize all the terms together so that we don't have to worry about
         # padding issues when we batch the data. That is, it will automatically
         # pad all the terms to be the same length (the largest sequence).
         umls_text = [x["desc"] for x in umls_terms.values()]
         tokenized_umls = text_tokenizer(
-            umls_text, return_tensors="pt", padding=True
+            umls_text, return_tensors="pt", padding=True, truncation=True
         )
         assert isinstance(tokenized_umls, BatchEncoding)
         expanded_umls_values = [
@@ -181,10 +192,10 @@ class MedGeeseDataModule(LightningDataModule):
         # pulling the original datasets and performing manual preprocessing.
         # For now, all multi-concept datasets have been removed from the
         # v1 dataset directory.
-        img_mask_path = os.path.join(data_dir, "ground_truths")
+        img_mask_path = os.path.join(data_dir, self.hparams.data_source)
         for root, _, files in os.walk(img_mask_path):
             for file in files:
-                if file.endswith(".npz") and ("MR" not in root and "CT" not in root):
+                if file.endswith(".npz"):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
 
@@ -201,7 +212,6 @@ class MedGeeseDataModule(LightningDataModule):
             term_mapping = json.load(json_file)
 
         os.makedirs(tensor_dir, exist_ok=True)
-
         # Function for resizing and processing masks to convert them into tensors.
         def process(row):
             if (
@@ -215,8 +225,9 @@ class MedGeeseDataModule(LightningDataModule):
             packed_data = np.load(row.File)
             img = packed_data["imgs"]
             mask = packed_data["gts"]
-
-            if len(np.unique(mask)) == 1:
+            if len(np.unique(mask)) == 1 and np.unique(mask)[0] == 0:
+                print(row.File, np.unique(mask))
+                #throw_count+=1
                 return
 
             # TODO(kathryncarbone): add test to make sure the mask and
@@ -233,6 +244,9 @@ class MedGeeseDataModule(LightningDataModule):
                 # This converts 3D volumes into 2D slices, with each image slice
                 # corresponding to a mask slice
                 imgs, masks = m_utils.extract_2d_masks(img, mask)
+                if len(masks) != mask.shape[0]:
+                    print(row.File)
+                    #throw_count+=1
             else:
                 # It is possible for images to be RGB and masks to
                 # be greyscale/2D arrays. To check shape agreement,
@@ -292,12 +306,29 @@ class MedGeeseDataModule(LightningDataModule):
                 y = term["idx"]
                 candidate_text = term["desc"]
                 try:
+                    if self.hparams.crop:
+                       xs=[]
+                       ys=[]
+                       bboxes = regionprops(mask)
+                       for prop in bboxes:
+                           bbox = prop.bbox
+                           prop_x = bbox[1]
+                           prop_y = bbox[0]
+                           prop_x2 = bbox[3]
+                           prop_y2 = bbox[2]
 
-                    img = (
-                        Image.fromarray(img)
-                        .convert("RGB")
-                        .resize((224, 224), Image.LANCZOS)
-                    )
+                           xs.extend([prop_x, prop_x2])
+                           ys.extend([prop_y, prop_y2])
+                       max_x = max(xs)
+                       max_y = max(ys)
+                       min_x = min(xs)
+                       min_y = min(ys)
+                       cropped_img = img[min_y:max_y, min_x:max_x,]
+                       if cropped_img.shape == img.shape:
+                           print(min_x, max_x, min_y, max_y)
+                       img=cropped_img
+
+                    img = (Image.fromarray(img).convert("RGB").resize((224, 224), Image.LANCZOS))
                     mask = Image.fromarray(mask).resize(
                         (224, 224), Image.LANCZOS
                     )
@@ -316,7 +347,7 @@ class MedGeeseDataModule(LightningDataModule):
                     # dictionaries, rather than a tuple.
                     torch.save(
                         (img, mask, y, candidate_text),
-                        (f"{tensor_dir}/{index}-{i}.pt"),
+                        (f"{tensor_dir}/{index}-{i}-{y}.pt"),
                     )
 
                 except Exception as e:
@@ -330,6 +361,7 @@ class MedGeeseDataModule(LightningDataModule):
             delayed(process)(row)
             for row in tqdm(mega.itertuples(index=False), total=len(mega))
         )
+        #print(throw_count)
         # mega.progress_apply(process, axis=1)
 
     def setup(self, stage: str):
@@ -370,6 +402,21 @@ class MedGeeseDataModule(LightningDataModule):
 
         tensor_dir = self.hparams.tensor_dir  # type: ignore
         examples = list(glob(tensor_dir + "/*.pt"))
+        gliomas = []
+        random.seed(42)
+        all_check = []
+        for i in examples:
+            count = int(os.path.basename(i).split("-")[-1].split(".")[0])
+            if count == 18:
+                gliomas.append(i)
+            all_check.append(count)
+        removed_gliomas = random.sample(gliomas, int(len(gliomas)/2))
+        print("number of gliomas to remove", len(removed_gliomas))
+        #temp = [x for x in examples if x not in removed_gliomas]
+        #print("done removing")
+        #examples = temp
+        new_dataset_size = int(len(examples)-len(removed_gliomas))
+        print("new dataset size", new_dataset_size)
         # Group datapoints by case to ensure no data leakage happens
         by_case = [
             list(i)
@@ -377,14 +424,25 @@ class MedGeeseDataModule(LightningDataModule):
                 examples, lambda x: os.path.basename(x).split("-")[0]
             )
         ]
+        all = []
+        for i in by_case:
+            count = os.path.basename(i[0]).split("-")[-1].split(".")[0]
+            all.append(int(count))
+
         train, val, test = self.hparams.train_val_test_split  # type: ignore
-        train_set, val_test_set = train_test_split(
-            by_case, train_size=train, test_size=val + test
-        )
-        val_set, test_set = train_test_split(
-            val_test_set, test_size=test / (val + test)
+        train_set, val_test_set, train_y, val_test_y = train_test_split(
+            by_case,
+            all,
+            train_size=train,
+            test_size=val + test,
+            random_state=42,
         )
 
+        val_set, test_set, v_y, t_y = train_test_split(
+            val_test_set,
+            val_test_y,
+            test_size=test / (val + test),
+        )
         # Flatten cases into final lists. The size ratios will likely not be exact
         # to the desired ratios, but the goal is to get a relatively even amount
         # through random splitting.
@@ -392,6 +450,28 @@ class MedGeeseDataModule(LightningDataModule):
         final_test_set = [slice for case in test_set for slice in case]
         final_val_set = [slice for case in val_set for slice in case]
 
+        classes = [
+            int(os.path.basename(i).split("-")[-1].split(".")[0])
+            for i in final_train_set
+        ]
+        for i in set(all):
+            print(i, classes.count(i))
+            print(i, all_check.count(i))
+        c = []
+        for i in final_train_set:
+            count = os.path.basename(i).split("-")[-1].split(".")[0]
+            c.append(int(count))
+
+        weights = [0] * 20
+        for i in set(c):
+            weights[i] = 1 / c.count(i)
+        sample_weights = [0] * len(c)
+        for i in range(len(c)):
+            sample_weights[i] = weights[c[i]]
+        new_dataset_size = new_dataset_size - len(final_test_set) - len(final_val_set)
+        print(new_dataset_size)
+        self.sampler = WeightedRandomSampler(sample_weights, replacement=True, num_samples=new_dataset_size) #len(sample_weights))
+        self.distributed_sampler = DistributedSamplerWrapper(self.sampler, num_replicas=2, shuffle=False)
         if self._train_dataset is None:
             # make training dataset
             self._train_dataset = MedGeeseDataset(
@@ -422,7 +502,8 @@ class MedGeeseDataModule(LightningDataModule):
         return DataLoader(
             self._train_dataset,
             batch_size=self.hparams.train_batch_size,  # type: ignore
-            shuffle=True,
+            sampler=self.distributed_sampler,
+            shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
         )
 
@@ -431,9 +512,11 @@ class MedGeeseDataModule(LightningDataModule):
         Return the validation dataloader.
         """
         assert self._val_dataset is not None
+        sampler = DistributedSampler(self._val_dataset)
         return DataLoader(
             self._val_dataset,
-            batch_size=self.hparams.train_batch_size,  # type: ignore
+            batch_size=self.hparams.test_batch_size,  # type: ignore
+            sampler=sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
         )
@@ -443,9 +526,11 @@ class MedGeeseDataModule(LightningDataModule):
         Return the test dataloader.
         """
         assert self._test_dataset is not None
+        sampler = DistributedSampler(self._test_dataset)
         return DataLoader(
             self._test_dataset,
             batch_size=self.hparams.test_batch_size,  # type: ignore
+            sampler=sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
         )

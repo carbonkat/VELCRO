@@ -21,11 +21,11 @@ def main():
 
     # TODO(carbonkat): link this with the datadir parameter set in the paths file
     # in configs (possibly use https://click.palletsprojects.com/en/stable/).
-    data_dir = "<data_dir here>"
-    mask_dir = "<mask_dir here>"
+    data_dir = "./data/dataset_files/v1/ground_truths"
+    mask_dir = "./data/dataset_files/v1/masks"
 
     # TODO(carbonkat): make this path dynamic
-    sam = sam_model_registry["default"](checkpoint="<sam_checkpoint_path here>")
+    sam = sam_model_registry["vit_b"](checkpoint="./segment_anything/checkpoints/sam_vit_b.pth")
     sam.to(device="cuda")
     mask_predictor = SamPredictor(sam)
 
@@ -58,23 +58,25 @@ def main():
     for f in tqdm(file_folder):
         new_folder = os.path.dirname(f).replace(data_dir, "")[1:]
         mask_folder = os.path.join(mask_dir, new_folder)
+        if os.path.exists(os.path.join(mask_folder, os.path.basename(f))):
+            continue
 
         packed_data = np.load(f)
         img = packed_data["imgs"]
-        mask = packed_data["gts"]
+        original_mask = packed_data["gts"]
 
-        if len(np.unique(mask)) == 1:
+        if len(np.unique(original_mask)) == 1:
             continue
 
         data_dict = {"imgs": img}
-
+        #print(img.shape, original_mask.shape)
         # If a 3D volume, get image and mask slices for
         # each timestep.
         if len(img.shape) > 2 and img.shape[2] != 3:
-            imgs, masks = utils.extract_2d_masks(img, mask)
+            imgs, masks = utils.extract_2d_masks(img, original_mask)
         else:
             imgs = [img]
-            masks = [mask]
+            masks = [original_mask]
 
         all_masks = []
         for mask, candidate_img in zip(imgs, masks):
@@ -108,7 +110,7 @@ def main():
                 new_masks.append(m)
 
             blank_canvas = np.zeros_like(mask)
-
+            #print(blank_canvas.shape, len(new_masks))
             # Iterate through each mask and gradually add to
             # the full reconstructed mask. NOTE: this assumes
             # all segmentations belong to the same concept.
@@ -116,8 +118,12 @@ def main():
                 blank_canvas[m != 0] = 255
             all_masks.append(blank_canvas)
 
-        final_mask = np.asarray(all_masks).squeeze()
-        assert final_mask.shape == mask.shape
+        final_mask = np.asarray(all_masks) #.squeeze()
+        if len(original_mask.shape) == 2:
+            final_mask = final_mask.squeeze()
+        #print(np.unique(final_mask))
+        #print("final mask shape", final_mask.shape, original_mask.shape)
+        assert final_mask.shape == original_mask.shape
         data_dict["gts"] = final_mask
         np.savez(
             os.path.join(mask_folder, os.path.basename(f)),

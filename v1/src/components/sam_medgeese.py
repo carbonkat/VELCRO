@@ -124,10 +124,15 @@ class SAMMedGeese(TwoTowerEncoder):
             computed SAM mask(s).
         """
         img = image_input["img"]
-        #print(img)
+        print(img.shape)
         #print(bounding_boxes.shape)
         if len(bounding_boxes.shape) < 3:
+            if len(bounding_boxes.shape) == 1:
+                bounding_boxes = bounding_boxes.unsqueeze(0)
             bounding_boxes = bounding_boxes[:, None, :]  # (B, 1, 4)
+        if len(img.shape) < 4:
+            img = img.unsqueeze(0)
+        print(img.shape)
         sparse_prompt_embeddings, dense_prompt_embeddings = self.vision_model.prompt_encoder(input_points=None, input_labels=None, input_masks=None, input_boxes=bounding_boxes)
         image_embeddings = self.vision_model.vision_encoder(pixel_values=img)[0]
         image_positional_embeddings = self.vision_model.get_image_wide_positional_embeddings()

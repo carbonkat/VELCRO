@@ -19,5 +19,7 @@ scheduler:
   factor: 0.1
   patience: 10
 
+data_dir: ${paths.data_dir}
+
 # compile model for faster training with pytorch 2.0
-compile: True
+compile: False

@@ -114,7 +114,8 @@ class ContrastiveLoss(Loss):
         Returns:
             The cross-entropy loss value.
         """
-
+        #print("roi embeddings shape", roi_embeddings.shape)
+        #print("candidate text shape", candidate_embeddings.shape)
         class_indices = y_true["class_indices"]
         flattened_batch, roi_embed_dim = roi_embeddings.shape
         num_candidates, cand_embed_dim = candidate_embeddings.shape
@@ -122,13 +123,13 @@ class ContrastiveLoss(Loss):
             assert flattened_batch == num_candidates
 
         assert roi_embed_dim == cand_embed_dim
-
         similarity = (
             self.cosine_similarity(
                 candidate_embeddings, roi_embeddings.unsqueeze(1)
             )
             / self.temperature
         )
+        #print("similarity shape", similarity.shape, flattened_batch, num_candidates)
         assert similarity.shape == (
             flattened_batch,
             num_candidates,
@@ -239,7 +240,7 @@ class ContrastiveLoss(Loss):
 
         # TODO(liamhebert): make sure the dimension is correct
         preds = torch.argmax(similarity, dim=1)
-
+        #print(similarity)
         return (
             torch.nn.functional.cross_entropy(similarity, similarity_matrix),
             preds,
@@ -326,6 +327,7 @@ class CombinedLoss(Loss):
         self.weight_segmentation = weight_segmentation
         self.contrastive_loss = contrastive_loss
         self.segmentation_loss = segmentation_loss
+        self.remove_duplicates = True
 
     def __call__(
         self,
@@ -352,6 +354,11 @@ class CombinedLoss(Loss):
         Returns:
             The combined loss value.
         """
+        if self.remove_duplicates:
+            self.contrastive_loss.remove_duplicates=True
+        else:
+            self.contrastive_loss.remove_duplicates=False
+
         l1, preds = self.contrastive_loss(
             roi_embeddings, candidate_embeddings, y_true
         )
