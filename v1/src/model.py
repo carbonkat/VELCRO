@@ -49,6 +49,7 @@ class TwoTowerEncoder(nn.Module, ABC):
         self,
         candidate_input: dict[str, torch.Tensor],
         image_input: dict[str, torch.Tensor],
+        bounding_boxes: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Generates the required embeddings for the text and image inputs.
 
@@ -120,6 +121,7 @@ class Model(pl.LightningModule):
         self.scheduler = scheduler
         self.encoder = encoder
         self.loss = loss
+        self.loss.all_gather_fn = self.all_gather
 
         # for averaging loss across batches
         self.train_loss = MeanMetric()

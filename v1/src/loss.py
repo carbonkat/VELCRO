@@ -9,12 +9,22 @@ import torch
 from torch import nn
 from monai.losses import DiceLoss
 from monai.losses import FocalLoss
+from types import Callable
 
 
 class Loss(ABC, nn.Module):
     """
     Abstract class for loss functions.
     """
+
+    def _dummy_all_gather(
+        self, data: tuple[torch.Tensor] | torch.Tensor, sync_grads: bool = False
+    ) -> tuple[torch.Tensor, ...] | torch.Tensor:
+        return data
+
+    all_gather_fn: Callable[..., tuple[torch.Tensor, ...] | torch.Tensor] = (
+        _dummy_all_gather
+    )
 
     @abstractmethod
     def __call__(
@@ -117,6 +127,20 @@ class ContrastiveLoss(Loss):
         # print("roi embeddings shape", roi_embeddings.shape)
         # print("candidate text shape", candidate_embeddings.shape)
         class_indices = y_true["class_indices"]
+        full_candidate_embeddings, full_roi_embeddings = self.all_gather_fn(
+            (candidate_embeddings, roi_embeddings), sync_grads=True
+        )
+        full_class_indices = self.all_gather_fn(class_indices, sync_grads=False)
+        assert isinstance(full_class_indices, torch.Tensor)
+
+        candidate_embeddings = full_candidate_embeddings.reshape(
+            -1, candidate_embeddings.shape[-1]
+        )
+        roi_embeddings = full_roi_embeddings.reshape(
+            -1, roi_embeddings.shape[-1]
+        )
+        class_indices = full_class_indices.reshape(-1)
+
         flattened_batch, roi_embed_dim = roi_embeddings.shape
         num_candidates, cand_embed_dim = candidate_embeddings.shape
         if self.remove_duplicates:
