@@ -9,12 +9,22 @@ import torch
 from torch import nn
 from monai.losses import DiceLoss
 from monai.losses import FocalLoss
+from types import Callable
 
 
 class Loss(ABC, nn.Module):
     """
     Abstract class for loss functions.
     """
+
+    def _dummy_all_gather(
+        self, data: tuple[torch.Tensor] | torch.Tensor, sync_grads: bool = False
+    ) -> tuple[torch.Tensor, ...] | torch.Tensor:
+        return data
+
+    all_gather_fn: Callable[..., tuple[torch.Tensor, ...] | torch.Tensor] = (
+        _dummy_all_gather
+    )
 
     @abstractmethod
     def __call__(
@@ -114,9 +124,23 @@ class ContrastiveLoss(Loss):
         Returns:
             The cross-entropy loss value.
         """
-        #print("roi embeddings shape", roi_embeddings.shape)
-        #print("candidate text shape", candidate_embeddings.shape)
+        # print("roi embeddings shape", roi_embeddings.shape)
+        # print("candidate text shape", candidate_embeddings.shape)
         class_indices = y_true["class_indices"]
+        full_candidate_embeddings, full_roi_embeddings = self.all_gather_fn(
+            (candidate_embeddings, roi_embeddings), sync_grads=True
+        )
+        full_class_indices = self.all_gather_fn(class_indices, sync_grads=False)
+        assert isinstance(full_class_indices, torch.Tensor)
+
+        candidate_embeddings = full_candidate_embeddings.reshape(
+            -1, candidate_embeddings.shape[-1]
+        )
+        roi_embeddings = full_roi_embeddings.reshape(
+            -1, roi_embeddings.shape[-1]
+        )
+        class_indices = full_class_indices.reshape(-1)
+
         flattened_batch, roi_embed_dim = roi_embeddings.shape
         num_candidates, cand_embed_dim = candidate_embeddings.shape
         if self.remove_duplicates:
@@ -129,7 +153,7 @@ class ContrastiveLoss(Loss):
             )
             / self.temperature
         )
-        #print("similarity shape", similarity.shape, flattened_batch, num_candidates)
+        # print("similarity shape", similarity.shape, flattened_batch, num_candidates)
         assert similarity.shape == (
             flattened_batch,
             num_candidates,
@@ -240,7 +264,7 @@ class ContrastiveLoss(Loss):
 
         # TODO(liamhebert): make sure the dimension is correct
         preds = torch.argmax(similarity, dim=1)
-        #print(similarity)
+        # print(similarity)
         return (
             torch.nn.functional.cross_entropy(similarity, similarity_matrix),
             preds,
@@ -355,9 +379,9 @@ class CombinedLoss(Loss):
             The combined loss value.
         """
         if self.remove_duplicates:
-            self.contrastive_loss.remove_duplicates=True
+            self.contrastive_loss.remove_duplicates = True
         else:
-            self.contrastive_loss.remove_duplicates=False
+            self.contrastive_loss.remove_duplicates = False
 
         l1, preds = self.contrastive_loss(
             roi_embeddings, candidate_embeddings, y_true
