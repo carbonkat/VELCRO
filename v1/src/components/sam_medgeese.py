@@ -10,6 +10,7 @@ from transformers import AutoModel
 from segment_anything import sam_model_registry
 from transformers import AutoProcessor
 
+
 class SAMMedGeese(TwoTowerEncoder):
     """
     Model that generates masks and matches patch embeddings
@@ -41,16 +42,16 @@ class SAMMedGeese(TwoTowerEncoder):
                 the same style as V1-CLIP), or using native mask embeddings (SAM)
         """
         super().__init__()
-        self.text_model_path=text_model_path
+        self.text_model_path = text_model_path
         self.sequential = sequential
         self.text_model = AutoModel.from_pretrained(text_model_path)
-        self.vision_model = AutoModel.from_pretrained('facebook/sam-vit-base')
+        self.vision_model = AutoModel.from_pretrained("facebook/sam-vit-base")
         text_embedding_dim = self.text_model.config.hidden_size
         img_embedding_dim = self.vision_model.config.vision_config.hidden_size
         self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
         self.vision_projection = nn.Linear(img_embedding_dim, projection_dim)
-        self.processor = AutoProcessor.from_pretrained('facebook/sam-vit-base')
-        '''
+        self.processor = AutoProcessor.from_pretrained("facebook/sam-vit-base")
+        """
         self.sequential = sequential
         self.text_model = AutoModel.from_pretrained(text_model_path)
         self.text_model_path = text_model_path
@@ -102,7 +103,8 @@ class SAMMedGeese(TwoTowerEncoder):
         self.expand_mask_kernel.weight = nn.Parameter(
             torch.ones_like(self.expand_mask_kernel.weight), requires_grad=False
         )
-        '''
+        """
+
     def forward(
         self,
         candidate_input: dict[str, Tensor],
@@ -125,7 +127,7 @@ class SAMMedGeese(TwoTowerEncoder):
         """
         img = image_input["img"]
         print(img.shape)
-        #print(bounding_boxes.shape)
+        # print(bounding_boxes.shape)
         if len(bounding_boxes.shape) < 3:
             if len(bounding_boxes.shape) == 1:
                 bounding_boxes = bounding_boxes.unsqueeze(0)
@@ -133,65 +135,108 @@ class SAMMedGeese(TwoTowerEncoder):
         if len(img.shape) < 4:
             img = img.unsqueeze(0)
         print(img.shape)
-        sparse_prompt_embeddings, dense_prompt_embeddings = self.vision_model.prompt_encoder(input_points=None, input_labels=None, input_masks=None, input_boxes=bounding_boxes)
+        sparse_prompt_embeddings, dense_prompt_embeddings = (
+            self.vision_model.prompt_encoder(
+                input_points=None,
+                input_labels=None,
+                input_masks=None,
+                input_boxes=bounding_boxes,
+            )
+        )
         image_embeddings = self.vision_model.vision_encoder(pixel_values=img)[0]
-        image_positional_embeddings = self.vision_model.get_image_wide_positional_embeddings()
+        image_positional_embeddings = (
+            self.vision_model.get_image_wide_positional_embeddings()
+        )
         # repeat with batch size
         batch_size = image_embeddings.shape[0]
-        image_positional_embeddings = image_positional_embeddings.repeat(batch_size, 1, 1, 1)
+        image_positional_embeddings = image_positional_embeddings.repeat(
+            batch_size, 1, 1, 1
+        )
         batch_size, num_channels, height, width = image_embeddings.shape
         point_batch_size = sparse_prompt_embeddings.shape[1]
         # Concatenate output tokens
-        output_tokens = torch.cat([self.vision_model.mask_decoder.iou_token.weight, self.vision_model.mask_decoder.mask_tokens.weight], dim=0)
+        output_tokens = torch.cat(
+            [
+                self.vision_model.mask_decoder.iou_token.weight,
+                self.vision_model.mask_decoder.mask_tokens.weight,
+            ],
+            dim=0,
+        )
         output_tokens = output_tokens.repeat(batch_size, point_batch_size, 1, 1)
 
         if sparse_prompt_embeddings.sum().item() != 0:
             tokens = torch.cat((output_tokens, sparse_prompt_embeddings), dim=2)
         else:
             tokens = output_tokens
-        point_embeddings = tokens.to(self.vision_model.mask_decoder.iou_token.weight.dtype)
+        point_embeddings = tokens.to(
+            self.vision_model.mask_decoder.iou_token.weight.dtype
+        )
 
         # Expand per-image data in batch direction to be per-point
         image_embeddings = image_embeddings + dense_prompt_embeddings
-        image_embeddings = image_embeddings.repeat_interleave(point_batch_size, 0)
-        image_positional_embeddings = image_positional_embeddings.repeat_interleave(point_batch_size, 0)
+        image_embeddings = image_embeddings.repeat_interleave(
+            point_batch_size, 0
+        )
+        image_positional_embeddings = (
+            image_positional_embeddings.repeat_interleave(point_batch_size, 0)
+        )
 
         # Run the transformer, image_positional_embedding are consumed
-        point_embedding, image_embeddings, attentions = self.vision_model.mask_decoder.transformer(
-            point_embeddings=point_embeddings,
-            image_embeddings=image_embeddings,
-            image_positional_embeddings=image_positional_embeddings,
-            attention_similarity=None,
-            target_embedding=None,
-            output_attentions=None,
+        point_embedding, image_embeddings, attentions = (
+            self.vision_model.mask_decoder.transformer(
+                point_embeddings=point_embeddings,
+                image_embeddings=image_embeddings,
+                image_positional_embeddings=image_positional_embeddings,
+                attention_similarity=None,
+                target_embedding=None,
+                output_attentions=None,
+            )
         )
         iou_token_out = point_embedding[:, :, 0, :]
-        mask_tokens_out = point_embedding[:, :, 1 : (1 + self.vision_model.mask_decoder.num_mask_tokens), :]
-        #roi_embeddings = mask_tokens_out.squeeze(1)
-        #print("roi embeddings before project", roi_embeddings.shape)
-        #roi_embeddings = self.vision_projection(roi_embeddings)
-        #print("after projection", roi_embeddings.shape)
+        mask_tokens_out = point_embedding[
+            :, :, 1 : (1 + self.vision_model.mask_decoder.num_mask_tokens), :
+        ]
+        # roi_embeddings = mask_tokens_out.squeeze(1)
+        # print("roi embeddings before project", roi_embeddings.shape)
+        # roi_embeddings = self.vision_projection(roi_embeddings)
+        # print("after projection", roi_embeddings.shape)
         # Upscale mask embeddings and predict masks using the mask tokens
         image_embeddings = image_embeddings.transpose(2, 3).reshape(
             batch_size * point_batch_size, num_channels, height, width
         )
 
-        upscaled_embedding = self.vision_model.mask_decoder.upscale_conv1(image_embeddings)
-        upscaled_embedding = self.vision_model.mask_decoder.activation(self.vision_model.mask_decoder.upscale_layer_norm(upscaled_embedding))
-        upscaled_embedding = self.vision_model.mask_decoder.activation(self.vision_model.mask_decoder.upscale_conv2(upscaled_embedding))
+        upscaled_embedding = self.vision_model.mask_decoder.upscale_conv1(
+            image_embeddings
+        )
+        upscaled_embedding = self.vision_model.mask_decoder.activation(
+            self.vision_model.mask_decoder.upscale_layer_norm(
+                upscaled_embedding
+            )
+        )
+        upscaled_embedding = self.vision_model.mask_decoder.activation(
+            self.vision_model.mask_decoder.upscale_conv2(upscaled_embedding)
+        )
 
         hyper_in_list = []
         for i in range(self.vision_model.mask_decoder.num_mask_tokens):
-            current_mlp = self.vision_model.mask_decoder.output_hypernetworks_mlps[i]
+            current_mlp = (
+                self.vision_model.mask_decoder.output_hypernetworks_mlps[i]
+            )
             hyper_in_list += [current_mlp(mask_tokens_out[:, :, i, :])]
         hyper_in = torch.stack(hyper_in_list, dim=2)
 
         _, num_channels, height, width = upscaled_embedding.shape
-        upscaled_embedding = upscaled_embedding.reshape(batch_size, point_batch_size, num_channels, height * width)
-        masks = (hyper_in @ upscaled_embedding).reshape(batch_size, point_batch_size, -1, height, width)
+        upscaled_embedding = upscaled_embedding.reshape(
+            batch_size, point_batch_size, num_channels, height * width
+        )
+        masks = (hyper_in @ upscaled_embedding).reshape(
+            batch_size, point_batch_size, -1, height, width
+        )
 
         # Generate mask quality predictions
-        iou_pred = self.vision_model.mask_decoder.iou_prediction_head(iou_token_out)
+        iou_pred = self.vision_model.mask_decoder.iou_prediction_head(
+            iou_token_out
+        )
         multimask_output = False
         # Select the correct mask or masks for output
         if multimask_output:
@@ -201,19 +246,25 @@ class SAMMedGeese(TwoTowerEncoder):
         masks = masks[:, :, mask_slice, :, :]
         iou_pred = iou_pred[:, :, mask_slice]
         roi_embeddings = mask_tokens_out[:, :, mask_slice, :]
-        #roi_embeddings = mask_tokens_out.squeeze(1)
+        # roi_embeddings = mask_tokens_out.squeeze(1)
         roi_embeddings = torch.sum(roi_embeddings, dim=1)
         roi_embeddings = roi_embeddings.squeeze(1)
-        #roi_embeddings = self.vision_projection(roi_embeddings)
-        #print("after projection", roi_embeddings.shape)
+        # roi_embeddings = self.vision_projection(roi_embeddings)
+        # print("after projection", roi_embeddings.shape)
         candidate_embed = self.text_model(**candidate_input).pooler_output
         candidate_embed = self.text_projection(candidate_embed)
 
-        masks = self.processor.post_process_masks(masks, original_sizes=[(1024, 1024)]*masks.shape[0], reshaped_input_sizes=[(1024, 1024)]*masks.shape[0], binarize=True, return_tensors='pt')
+        masks = self.processor.post_process_masks(
+            masks,
+            original_sizes=[(1024, 1024)] * masks.shape[0],
+            reshaped_input_sizes=[(1024, 1024)] * masks.shape[0],
+            binarize=True,
+            return_tensors="pt",
+        )
         masks = torch.stack(masks, dim=0)
         upscaled_masks = torch.sum(masks, dim=1)
-        #print(masks.shape, masks.unique())
-        '''
+        # print(masks.shape, masks.unique())
+        """
         #out = self.vision_model(pixel_values=img, input_boxes=bounding_boxes, output_hidden_states=True, multimask_output=False)
         #print(out)
         if len(bounding_boxes.shape) < 3:
@@ -279,7 +330,7 @@ class SAMMedGeese(TwoTowerEncoder):
         else:
             roi_embeddings = mask_embeddings.squeeze(1)
             roi_embeddings = self.vision_projection(roi_embeddings)
-        '''
+        """
         return (
             roi_embeddings,
             candidate_embed,

@@ -36,6 +36,7 @@ from torch.utils.data import DistributedSampler
 import random
 from catalyst.data.sampler import DistributedSamplerWrapper
 from skimage.measure import regionprops
+
 tqdm.pandas()
 
 logger = RankedLogger(__name__)
@@ -160,7 +161,9 @@ class MedGeeseDataModule(LightningDataModule):
             umls_terms = json.load(json_file)
 
         if "openai" in self.hparams.text_model_path:
-            text_tokenizer = CLIPTokenizer.from_pretrained(self.hparams.text_model_path)
+            text_tokenizer = CLIPTokenizer.from_pretrained(
+                self.hparams.text_model_path
+            )
         else:
             # Tokenize the UMLS terms
             text_tokenizer = AutoTokenizer.from_pretrained(
@@ -200,7 +203,7 @@ class MedGeeseDataModule(LightningDataModule):
                     master_files.append(os.path.join(root, file))
 
         mega = pd.DataFrame({"File": master_files, "Dataset": folders})
-        print(mega['Dataset'].value_counts())
+        print(mega["Dataset"].value_counts())
 
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
@@ -212,6 +215,7 @@ class MedGeeseDataModule(LightningDataModule):
             term_mapping = json.load(json_file)
 
         os.makedirs(tensor_dir, exist_ok=True)
+
         # Function for resizing and processing masks to convert them into tensors.
         def process(row):
             if (
@@ -227,7 +231,7 @@ class MedGeeseDataModule(LightningDataModule):
             mask = packed_data["gts"]
             if len(np.unique(mask)) == 1 and np.unique(mask)[0] == 0:
                 print(row.File, np.unique(mask))
-                #throw_count+=1
+                # throw_count+=1
                 return
 
             # TODO(kathryncarbone): add test to make sure the mask and
@@ -246,7 +250,7 @@ class MedGeeseDataModule(LightningDataModule):
                 imgs, masks = m_utils.extract_2d_masks(img, mask)
                 if len(masks) != mask.shape[0]:
                     print(row.File)
-                    #throw_count+=1
+                    # throw_count+=1
             else:
                 # It is possible for images to be RGB and masks to
                 # be greyscale/2D arrays. To check shape agreement,
@@ -307,28 +311,35 @@ class MedGeeseDataModule(LightningDataModule):
                 candidate_text = term["desc"]
                 try:
                     if self.hparams.crop:
-                       xs=[]
-                       ys=[]
-                       bboxes = regionprops(mask)
-                       for prop in bboxes:
-                           bbox = prop.bbox
-                           prop_x = bbox[1]
-                           prop_y = bbox[0]
-                           prop_x2 = bbox[3]
-                           prop_y2 = bbox[2]
+                        xs = []
+                        ys = []
+                        bboxes = regionprops(mask)
+                        for prop in bboxes:
+                            bbox = prop.bbox
+                            prop_x = bbox[1]
+                            prop_y = bbox[0]
+                            prop_x2 = bbox[3]
+                            prop_y2 = bbox[2]
 
-                           xs.extend([prop_x, prop_x2])
-                           ys.extend([prop_y, prop_y2])
-                       max_x = max(xs)
-                       max_y = max(ys)
-                       min_x = min(xs)
-                       min_y = min(ys)
-                       cropped_img = img[min_y:max_y, min_x:max_x,]
-                       if cropped_img.shape == img.shape:
-                           print(min_x, max_x, min_y, max_y)
-                       img=cropped_img
+                            xs.extend([prop_x, prop_x2])
+                            ys.extend([prop_y, prop_y2])
+                        max_x = max(xs)
+                        max_y = max(ys)
+                        min_x = min(xs)
+                        min_y = min(ys)
+                        cropped_img = img[
+                            min_y:max_y,
+                            min_x:max_x,
+                        ]
+                        if cropped_img.shape == img.shape:
+                            print(min_x, max_x, min_y, max_y)
+                        img = cropped_img
 
-                    img = (Image.fromarray(img).convert("RGB").resize((224, 224), Image.LANCZOS))
+                    img = (
+                        Image.fromarray(img)
+                        .convert("RGB")
+                        .resize((224, 224), Image.LANCZOS)
+                    )
                     mask = Image.fromarray(mask).resize(
                         (224, 224), Image.LANCZOS
                     )
@@ -361,7 +372,7 @@ class MedGeeseDataModule(LightningDataModule):
             delayed(process)(row)
             for row in tqdm(mega.itertuples(index=False), total=len(mega))
         )
-        #print(throw_count)
+        # print(throw_count)
         # mega.progress_apply(process, axis=1)
 
     def setup(self, stage: str):
@@ -410,12 +421,12 @@ class MedGeeseDataModule(LightningDataModule):
             if count == 18:
                 gliomas.append(i)
             all_check.append(count)
-        removed_gliomas = random.sample(gliomas, int(len(gliomas)/2))
+        removed_gliomas = random.sample(gliomas, int(len(gliomas) / 2))
         print("number of gliomas to remove", len(removed_gliomas))
-        #temp = [x for x in examples if x not in removed_gliomas]
-        #print("done removing")
-        #examples = temp
-        new_dataset_size = int(len(examples)-len(removed_gliomas))
+        # temp = [x for x in examples if x not in removed_gliomas]
+        # print("done removing")
+        # examples = temp
+        new_dataset_size = int(len(examples) - len(removed_gliomas))
         print("new dataset size", new_dataset_size)
         # Group datapoints by case to ensure no data leakage happens
         by_case = [
@@ -468,10 +479,16 @@ class MedGeeseDataModule(LightningDataModule):
         sample_weights = [0] * len(c)
         for i in range(len(c)):
             sample_weights[i] = weights[c[i]]
-        new_dataset_size = new_dataset_size - len(final_test_set) - len(final_val_set)
+        new_dataset_size = (
+            new_dataset_size - len(final_test_set) - len(final_val_set)
+        )
         print(new_dataset_size)
-        self.sampler = WeightedRandomSampler(sample_weights, replacement=True, num_samples=new_dataset_size) #len(sample_weights))
-        self.distributed_sampler = DistributedSamplerWrapper(self.sampler, num_replicas=2, shuffle=False)
+        self.sampler = WeightedRandomSampler(
+            sample_weights, replacement=True, num_samples=new_dataset_size
+        )  # len(sample_weights))
+        self.distributed_sampler = DistributedSamplerWrapper(
+            self.sampler, num_replicas=2, shuffle=False
+        )
         if self._train_dataset is None:
             # make training dataset
             self._train_dataset = MedGeeseDataset(

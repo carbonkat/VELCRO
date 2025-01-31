@@ -1,5 +1,5 @@
 #!/bin/bash
-    
+
 # To be submitted to the SLURM queue with the command:
 # sbatch batch-submit.sh
 
@@ -26,5 +26,5 @@
 
 # Task to run
 
-export PROJECT_ROOT='.' 
+export PROJECT_ROOT='.'
 bash run_exp.sh

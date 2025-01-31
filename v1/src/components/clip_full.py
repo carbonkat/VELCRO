@@ -43,9 +43,9 @@ class ClipFull(TwoTowerEncoder):
         """
         super().__init__()
         self.full_model = AutoModel.from_pretrained(vision_model_path)
-        
+
         self.text_model_path = text_model_path
-        '''
+        """
         self.text_model = AutoModel.from_pretrained(text_model_path)
         if is_clip:
             self.vision_model = CLIPVisionModel.from_pretrained(
@@ -84,7 +84,7 @@ class ClipFull(TwoTowerEncoder):
         self.expand_mask_kernel.weight = nn.Parameter(
             torch.ones_like(self.expand_mask_kernel.weight), requires_grad=False
         )
-        '''
+        """
 
     def forward(
         self, candidate_input: dict[str, Tensor], image_input: dict[str, Tensor]
@@ -110,7 +110,7 @@ class ClipFull(TwoTowerEncoder):
         outs = self.full_model(pixel_values=img, **candidate_input)
         img_embeddings = outs.image_embeds
         text_embeddings = outs.text_embeds
-        '''
+        """
         img_embed = self.vision_model(pixel_values=img)
 
         img_embed = self.vision_layer_norm(
@@ -127,7 +127,7 @@ class ClipFull(TwoTowerEncoder):
         # zero out the embeddings that are not in the mask.
         mask_embeds = torch.einsum("bij, bi -> bj", projected_img_embed, mask)
         mask_embeds = mask_embeds.squeeze(-1)
-        
+
         # Since the dot product above sums the tokens that make up the mask, we
         # now have to normalize the mask embeddings by the number of tokens that
         # make up the mask (ie: taking the mean). This is because some masks can
@@ -141,6 +141,6 @@ class ClipFull(TwoTowerEncoder):
 
         candidate_embed = self.text_model(**candidate_input).pooler_output
         candidate_embed = self.text_projection(candidate_embed)
-        '''
-        #print(img_embeddings.shape, text_embeddings.shape)
+        """
+        # print(img_embeddings.shape, text_embeddings.shape)
         return img_embeddings, text_embeddings
