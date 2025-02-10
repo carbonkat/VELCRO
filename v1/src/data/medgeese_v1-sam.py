@@ -24,6 +24,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 from torchvision.transforms import v2
+from torchvision.transforms import PILToTensor, ToPILImage
 import torchvision.tv_tensors as tv
 from tqdm import tqdm
 from transformers import AutoProcessor
@@ -150,6 +151,7 @@ class MedGeeseDataModule(LightningDataModule):
         sam_tokenizer_path: str,
         text_model_path: str,
         debug: bool = False,
+        from_mem: bool = False,
     ):
         assert (
             sum(train_val_test_split) == 1.0
@@ -339,18 +341,19 @@ class MedGeeseDataModule(LightningDataModule):
                 candidate_terms = [
                     umls_terms[term] for term in candidate_mini_terms
                 ]
-
+            #z = 0
             for i, (img, mask, term) in enumerate(
                 zip(imgs, masks, candidate_terms)
             ):
 
                 y = term["idx"]
                 candidate_text = term["desc"]
+                mask = mask.astype(np.uint8)
                 try:
 
                     img = Image.fromarray(img).convert("RGB")
                     mask = Image.fromarray(mask)
-
+                    #print(img.size, mask.size)
                     # Scaling factors for bounding boxes. This is
                     # needed to reshape them after the image and
                     # mask are resized to constant dimensions.
@@ -363,30 +366,68 @@ class MedGeeseDataModule(LightningDataModule):
                     # boxes than expected to be generated, so just
                     # generate on the original image and then resize.
                     reordered_boxes = []
+                    #img = img.resize((1024, 1024), Image.LANCZOS)
                     for prop in bboxes:
+                        #print("gothere!")
+                        #new_mask = np.zeros_like(np.array(mask))
                         bbox = prop.bbox
                         # Convert coordinates from y1,x1,y2,x2 to x1,y1,x2,y2
                         x1 = int(np.round(bbox[1] * x_scale))
                         y1 = int(np.round(bbox[0] * y_scale))
                         xmax = int(np.round(bbox[3] * x_scale))
                         ymax = int(np.round(bbox[2] * y_scale))
+                        #new_box = [x1, y1, xmax, ymax]
                         reordered_boxes.append([x1, y1, xmax, ymax])
+                        #first_slice = slice(int(x1*x_scale), int(y1*y_scale) + 1)
+                        #second_slice = slice(int(xmax*x_scale), int(ymax*y_scale) + 1)
 
-                    img = img.resize((1024, 1024), Image.LANCZOS)
-                    mask = mask.resize((1024, 1024), Image.LANCZOS)
-
-                    # Lanczos interpolation does not preserve binary nature of
-                    # masks, so must threshold after. Conversion to numpy speeds
-                    # up this process.
-                    mask = np.array(mask)
-                    mask[mask >= int(np.median(np.unique(mask)))] = 1
-                    mask[mask != 1] = 0
-                    mask = Image.fromarray(mask)
-
+                        #new_mask[first_slice, second_slice] = np.array(mask)[first_slice, second_slice]
+                        #new_mask = Image.fromarray(new_mask)
+                        #new_mask = new_mask.resize((1024, 1024), Image.LANCZOS)
+                        #new_mask = np.array(new_mask)
+                        #new_mask[new_mask >= int(np.median(np.unique(new_mask)))] = 1
+                        #new_mask[new_mask != 1] = 0
+                        #new_mask = Image.fromarray(new_mask)
+                        #torch.save(
+                        #    (img, new_mask, y, candidate_text, [new_box]),
+                        #    (f"{tensor_dir}/{index}-{z}-{y}.pt"),
+                        #)
+                        #z+=1
+                    #mask = np.array(mask)
+                    #img = np.array(img).astype(np.int8)
+                    #img = torch.from_numpy(img)
+                    if mask.size[0] >= 1024 or mask.size[1] >= 1024:
+                        img = img.resize((1024, 1024), Image.LANCZOS)
+                        mask = mask.resize((1024, 1024), Image.LANCZOS)
+                        #print("pil datatype", mask.dtype)
+                        # Lanczos interpolation does not preserve binary nature of
+                        # masks, so must threshold after. Conversion to numpy speeds
+                        # up this process.
+                        #mask = np.array(mask)
+                        mask = PILToTensor()(mask)
+                        #mask = np.array(mask)
+                        print(mask.unique(), mask.shape)
+                        mask = mask.numpy()
+                        mask[mask >= int(np.median(np.unique(mask)))] = 1
+                        mask[mask != 1] = 0
+                        mask = torch.from_numpy(mask)
+                        #mask = PILToTensor()(mask)
+                        img = PILToTensor()(img)
+                        #img = np.array(img).astype(np.int8)
+                        #mask[mask >= int(np.median(np.unique(mask)))] = 1
+                        mask[mask != 1] = 0
+                    else:
+                        mask = PILToTensor()(mask)
+                        img = PILToTensor()(img)
+                        #img = np.array(img).astype(np.int8)
+                        #img = torch.from_numpy(img)
+                        #mask = mask.astype(np.int8)
+                        #mask = torch.from_numpy(mask)
                     # TODO(liamhebert): Ensure that files are saved in a somewhat
                     # standardized way to match the rest of the datasets. For
                     # instance, datasets in v1 are saved as npz files with
                     # dictionaries, rather than a tuple.
+                    #print(mask.dtype)
                     torch.save(
                         (img, mask, y, candidate_text, reordered_boxes),
                         (f"{tensor_dir}/{index}-{i}-{y}.pt"),
@@ -394,7 +435,10 @@ class MedGeeseDataModule(LightningDataModule):
 
                 except Exception as e:
                     print(f"Error on file when resizing: {row.File}")
-                    print(img.shape, mask.shape)
+                    if type(img) == Image:
+                        print(img.size, mask.size)
+                    else:
+                        print(img.shape, mask.shape)
                     print(e)
 
         logger.info("pre-tokenizing data....")
@@ -419,6 +463,13 @@ class MedGeeseDataModule(LightningDataModule):
 
         # We only have access to trainer in setup, so we need to calculate
         # these parameters here.
+
+        self._train_device_batch_size = (
+                self.hparams.train_batch_size // self.trainer.world_size
+            )
+        self._test_device_batch_size = (
+                self.hparams.test_batch_size // self.trainer.world_size
+            )
         if self.trainer is not None and (
             self._train_device_batch_size is None
             or self._test_device_batch_size is None
@@ -439,6 +490,13 @@ class MedGeeseDataModule(LightningDataModule):
             self._test_device_batch_size = (
                 self.hparams.test_batch_size // self.trainer.world_size
             )
+        self._train_device_batch_size = (
+                self.hparams.train_batch_size // self.trainer.world_size
+        )
+        self._test_device_batch_size = (
+                self.hparams.test_batch_size // self.trainer.world_size
+        )
+        print(self._train_device_batch_size, self._test_device_batch_size)
         tensor_dir = self.hparams.tensor_dir  # type: ignore
         examples = list(glob(tensor_dir + "/*.pt"))
         gliomas = []
@@ -510,14 +568,15 @@ class MedGeeseDataModule(LightningDataModule):
         new_dataset_size = (
             new_dataset_size - len(final_test_set) - len(final_val_set)
         )
+        #new_dataset_size = 5000
         print(new_dataset_size)
         self.sampler = WeightedRandomSampler(
             sample_weights, replacement=True, num_samples=new_dataset_size
         )  # len(sample_weights))
-        self.distributed_sampler = self.sampler
-        # self.distributed_sampler = DistributedSamplerWrapper(
-        #     self.sampler, num_replicas=torch.cuda.device_count(), shuffle=False
-        # )
+        #self.distributed_sampler = self.sampler
+        self.distributed_sampler = DistributedSamplerWrapper(
+            self.sampler, num_replicas=torch.cuda.device_count(), shuffle=False
+        )
         """
         tensor_dir = self.hparams.tensor_dir  # type: ignore
         examples = list(glob(tensor_dir + "/*.pt"))
@@ -549,6 +608,7 @@ class MedGeeseDataModule(LightningDataModule):
                 items=final_train_set,
                 model_path=self.hparams.sam_tokenizer_path,  # type: ignore
                 is_testing=False,
+                from_mem=self.hparams.from_mem,
             )
         if self._val_dataset is None:
             # make validation dataset
@@ -556,6 +616,7 @@ class MedGeeseDataModule(LightningDataModule):
                 items=final_val_set,
                 model_path=self.hparams.sam_tokenizer_path,  # type: ignore
                 is_testing=False,
+                from_mem=self.hparams.from_mem,
             )
         if self._test_dataset is None:
             # Make test dataset
@@ -563,6 +624,7 @@ class MedGeeseDataModule(LightningDataModule):
                 items=final_test_set,
                 model_path=self.hparams.sam_tokenizer_path,  # type: ignore
                 is_testing=True,
+                from_mem=self.hparams.from_mem,
             )
 
     def train_dataloader(self) -> DataLoader:
@@ -572,7 +634,7 @@ class MedGeeseDataModule(LightningDataModule):
         assert self._train_dataset is not None
         return DataLoader(
             self._train_dataset,
-            batch_size=self.hparams.train_batch_size,  # type: ignore
+            batch_size=self._train_device_batch_size,  # type: ignore
             sampler=self.distributed_sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
@@ -587,7 +649,7 @@ class MedGeeseDataModule(LightningDataModule):
         sampler = DistributedSampler(self._val_dataset)
         return DataLoader(
             self._val_dataset,
-            batch_size=self.hparams.train_batch_size,  # type: ignore
+            batch_size=self._test_device_batch_size,  # type: ignore
             sampler=sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
@@ -602,7 +664,7 @@ class MedGeeseDataModule(LightningDataModule):
         sampler = DistributedSampler(self._test_dataset)
         return DataLoader(
             self._test_dataset,
-            batch_size=self.hparams.test_batch_size,  # type: ignore
+            batch_size=self._test_device_batch_size,  # type: ignore
             shuffle=False,
             sampler=sampler,
             num_workers=self.hparams.num_workers,  # type: ignore
@@ -618,11 +680,15 @@ class MedGeeseDataset(Dataset):
         use.
     """
 
-    def __init__(self, items: list[str], model_path: str, is_testing: bool):
+    def __init__(self, items: list[str], model_path: str, is_testing: bool, from_mem: bool):
         # assume our dataset contains image path, segmentation mask path, label,
         # bounding boxes corresponding to each distinct segment
+        if from_mem:
+            self.examples = {idx: torch.load(path, weights_only=False) for idx, path in enumerate(items)}
         self.items = items
         self.is_testing = is_testing
+        self.from_mem = from_mem
+
         self.safe_transforms = v2.Compose(
             [
                 v2.PILToTensor(),
@@ -646,14 +712,37 @@ class MedGeeseDataset(Dataset):
             A dictionary mapping keys to torch tensors. It is expected that the
             tensors have a shape of (batch_size, ...).
         """
-        (img, mask, label, candidate_text, bboxes) = torch.load(self.items[idx], weights_only=False)
-        assert isinstance(img, Image.Image), f"{type(img)=}"
-        assert isinstance(mask, Image.Image), f"{type(mask)=}"
+        if self.from_mem:
+            (img, mask, label, candidate_text, bboxes) = examples[idx]
+        else:
+            (img, mask, label, candidate_text, bboxes) = torch.load(
+                self.items[idx], weights_only=False
+            )
+        #assert isinstance(img, Image.Image), f"{type(img)=}"
+        #assert isinstance(mask, Image.Image), f"{type(mask)=}"
+        assert isinstance(img, torch.Tensor), f"{type(img)=}"
+        assert isinstance(mask, torch.Tensor), f"{type(mask)=}"
         assert isinstance(label, torch.Tensor), f"{type(label)=}"
         assert isinstance(candidate_text, dict), f"{type(candidate_text)=}"
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
         assert isinstance(bboxes, list), f"{type(bboxes)=}"
-
+        #print(img.shape, mask.shape)
+        #img = img.permute(2, 0, 1)
+        #print(img.shape)
+        img = ToPILImage()(img)
+        mask = ToPILImage()(mask)
+        if mask.size[0] < 1024 or mask.size[1] < 1024:
+            img = img.resize((1024, 1024), Image.LANCZOS)
+            mask = mask.resize((1024, 1024), Image.LANCZOS)
+            mask = PILToTensor()(mask)
+            #print("after reshaping", mask.shape, mask.dtype, torch.unique(mask))
+            mask = mask.numpy()
+            #mask = np.array(mask)
+            mask[mask >= int(np.median(np.unique(mask)))] = 1
+            mask[mask != 1] = 0
+            mask = torch.from_numpy(mask)
+            mask = ToPILImage()(mask)
+            #mask = Image.fromarray(mask)
         # mask = tv.Mask(mask)
         mask = tv.Mask(mask).to(torch.int32)
         img = tv.Image(img)

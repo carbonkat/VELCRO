@@ -15,5 +15,6 @@ pin_memory: False
 
 sam_tokenizer_path: ${modality_encoder.sam_tokenizer_name}
 text_model_path: ${modality_encoder.text_model_name}
+from_mem: True
 
 debug: False

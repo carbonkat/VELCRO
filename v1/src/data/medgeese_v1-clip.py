@@ -390,10 +390,15 @@ class MedGeeseDataModule(LightningDataModule):
 
         # We only have access to trainer in setup, so we need to calculate
         # these parameters here.
+        #print(self.trainer, self._train_device_batch_size, self.trainer.world_size)
+        self._train_device_batch_size = self.hparams.train_batch_size // self.trainer.world_size
+        self._test_device_batch_size = self.hparams.test_batch_size // self.trainer.world_size
+
         if self.trainer is not None and (
             self._train_device_batch_size is None
             or self._test_device_batch_size is None
         ):
+            print("trainer got here!")
             # We test both here to fail quickly if misconfigured
             if (
                 self.hparams.train_batch_size % self.trainer.world_size != 0
@@ -407,6 +412,7 @@ class MedGeeseDataModule(LightningDataModule):
             self._train_device_batch_size = (
                 self.hparams.train_batch_size // self.trainer.world_size
             )
+            print("train device batch size", self._train_device_batch_size, self.trainer.world_size)
             self._test_device_batch_size = (
                 self.hparams.test_batch_size // self.trainer.world_size
             )
@@ -482,12 +488,13 @@ class MedGeeseDataModule(LightningDataModule):
         new_dataset_size = (
             new_dataset_size - len(final_test_set) - len(final_val_set)
         )
-        print(new_dataset_size)
+        print(new_dataset_size, self._train_device_batch_size, self._test_device_batch_size)
         self.sampler = WeightedRandomSampler(
             sample_weights, replacement=True, num_samples=new_dataset_size
         )  # len(sample_weights))
+        print("world size", self.trainer.world_size)
         self.distributed_sampler = DistributedSamplerWrapper(
-            self.sampler, num_replicas=2, shuffle=False
+            self.sampler, num_replicas=self.trainer.world_size, shuffle=False
         )
         if self._train_dataset is None:
             # make training dataset
@@ -518,7 +525,7 @@ class MedGeeseDataModule(LightningDataModule):
         assert self._train_dataset is not None
         return DataLoader(
             self._train_dataset,
-            batch_size=self.hparams.train_batch_size,  # type: ignore
+            batch_size=self._train_device_batch_size,  # type: ignore
             sampler=self.distributed_sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
@@ -532,7 +539,7 @@ class MedGeeseDataModule(LightningDataModule):
         sampler = DistributedSampler(self._val_dataset)
         return DataLoader(
             self._val_dataset,
-            batch_size=self.hparams.test_batch_size,  # type: ignore
+            batch_size=self._test_device_batch_size,  # type: ignore
             sampler=sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore
@@ -546,7 +553,7 @@ class MedGeeseDataModule(LightningDataModule):
         sampler = DistributedSampler(self._test_dataset)
         return DataLoader(
             self._test_dataset,
-            batch_size=self.hparams.test_batch_size,  # type: ignore
+            batch_size=self._test_device_batch_size,  # type: ignore
             sampler=sampler,
             shuffle=False,
             num_workers=self.hparams.num_workers,  # type: ignore

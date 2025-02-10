@@ -120,6 +120,7 @@ class Model(pl.LightningModule):
         self.scheduler = scheduler
         self.encoder = encoder
         self.loss = loss
+        self.loss.log = self.log
 
         # for averaging loss across batches
         self.train_loss = MeanMetric()
@@ -149,6 +150,8 @@ class Model(pl.LightningModule):
         self.tokenized_umls = text_tokenizer(
             umls_text, return_tensors="pt", padding=True, truncation=True
         )
+        print(self.tokenized_umls)
+        #print("checking cuda", torch.is_cuda(self.tokenized_umls))
         # self.tokenized_umls.to(device)
         # print(self.tokenized_umls['input_ids'].shape)
 
@@ -240,9 +243,12 @@ class Model(pl.LightningModule):
         """
         return self.encoder(**x)
 
-    def model_step(
-        self, batch: dict[str, dict[str, torch.Tensor]]
-    ) -> Tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+    def model_step(self, batch: dict[str, dict[str, torch.Tensor]]) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        dict[str, torch.Tensor],
+        dict[str, torch.Tensor],
+    ]:
         """Compute the loss for a batch of data.
 
         Args:
@@ -256,9 +262,9 @@ class Model(pl.LightningModule):
         x, y = batch["x"], batch["y"]
         outs = self.forward(x)
         # print("candidate embed shape", outs[0].shape)
-        loss, preds = self.loss(*outs, y)
+        loss, preds, loss_metrics = self.loss(*outs, y)
         # (loss)
-        return loss, preds, y
+        return loss, preds, y, loss_metrics
 
     def on_train_start(self) -> None:
         """
@@ -561,8 +567,16 @@ class Model(pl.LightningModule):
         Returns:
             The loss value for that batch, using self.loss.
         """
-        loss, preds, targets = self.model_step(batch)
-
+        loss, preds, targets, loss_metrics = self.model_step(batch)
+        for key in loss_metrics.keys():
+            self.log(
+                f"train/{key}",
+                loss_metrics[key],
+                on_step=True,
+                on_epoch=True,
+                prog_bar=True,
+                sync_dist=True,
+            )
         # update and log metrics
         self.train_loss(loss)
         self.log(
@@ -592,11 +606,20 @@ class Model(pl.LightningModule):
         # print("validation before model step!")
         self.loss.remove_duplicates = False
         batch["x"]["candidate_input"] = self.tokenized_umls.to(self.device)
-        loss, preds, targets = self.model_step(batch)
+        loss, preds, targets, loss_metrics = self.model_step(batch)
         # print(preds.shape)
         # print(preds)
         # print("validation after model step!")
         # update and log metrics
+        for key in loss_metrics.keys():
+            self.log(
+                f"val/{key}",
+                loss_metrics[key],
+                on_step=True,
+                on_epoch=True,
+                prog_bar=True,
+                sync_dist=True,
+            )
         self.val_loss(loss)
         self.log(
             "val/loss",
@@ -638,8 +661,18 @@ class Model(pl.LightningModule):
         Returns:
             The loss value for that batch, using self.loss.
         """
-        batch["x"]["candidate_input"] = self.tokenized_umls
-        loss, preds, targets = self.model_step(batch)
+        batch["x"]["candidate_input"] = self.tokenized_umls.to(self.device)
+        loss, preds, targets, loss_metrics = self.model_step(batch)
+        for key in loss_metrics.keys():
+            self.log(
+                f"test/{key}",
+                loss_metrics[key],
+                on_step=True,
+                on_epoch=True,
+                prog_bar=True,
+                sync_dist=True,
+            )
+
         self.test_loss(loss)
         self.log(
             "test/loss",

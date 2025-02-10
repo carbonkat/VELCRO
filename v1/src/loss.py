@@ -9,6 +9,7 @@ import torch
 from torch import nn
 from monai.losses import DiceLoss
 from monai.losses import FocalLoss
+from typing import Callable
 
 
 class Loss(ABC, nn.Module):
@@ -16,13 +17,15 @@ class Loss(ABC, nn.Module):
     Abstract class for loss functions.
     """
 
+    log: Callable
+
     @abstractmethod
     def __call__(
         self,
         roi_embeddings: torch.Tensor,
         candidate_embeddings: torch.Tensor,
         y_true: dict[str, torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the loss function.
 
         Args:
@@ -98,7 +101,7 @@ class ContrastiveLoss(Loss):
         roi_embeddings: torch.Tensor,
         candidate_embeddings: torch.Tensor,
         y_true: dict[str, torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the cross-entropy loss.
 
         Args:
@@ -241,10 +244,8 @@ class ContrastiveLoss(Loss):
         # TODO(liamhebert): make sure the dimension is correct
         preds = torch.argmax(similarity, dim=1)
         # print(similarity)
-        return (
-            torch.nn.functional.cross_entropy(similarity, similarity_matrix),
-            preds,
-        )
+        loss = torch.nn.functional.cross_entropy(similarity, similarity_matrix)
+        return (loss, preds, {"contrastive_loss": loss})
 
 
 class SegmentationLoss(Loss):
@@ -280,7 +281,7 @@ class SegmentationLoss(Loss):
         self,
         pred_masks: torch.Tensor,
         gold_masks: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the segmentation loss.
 
         Args:
@@ -291,11 +292,12 @@ class SegmentationLoss(Loss):
         Returns:
             The segmentation loss value.
         """
-
+        #print("testing", pred_masks.shape, gold_masks.shape)
         dice = self.dice_loss(pred_masks, gold_masks)
         focal = self.focal_loss(pred_masks, gold_masks)
 
-        return self.weight_focal * focal + self.weight_dice * dice
+        loss = self.weight_focal * focal + self.weight_dice * dice
+        return (loss, torch.empty(dice.shape), {"segmentation_loss": loss, "dice": dice, "focal": focal})
 
 
 class CombinedLoss(Loss):
@@ -359,12 +361,15 @@ class CombinedLoss(Loss):
         else:
             self.contrastive_loss.remove_duplicates = False
 
-        l1, preds = self.contrastive_loss(
+        l1, preds, contrast_metrics = self.contrastive_loss(
             roi_embeddings, candidate_embeddings, y_true
         )
         gold_masks = y_true["gold_mask"]
-        l2 = self.segmentation_loss(predicted_masks, gold_masks)
+        l2, _, seg_metrics = self.segmentation_loss(predicted_masks, gold_masks)
+        #print("contrastive loss", l1, " segmentation metrics", l2, " full_loss", l1+l2)
+        contrast_metrics.update(seg_metrics)
         return (
             self.weight_contrastive * l1 + self.weight_segmentation * l2,
             preds,
+            contrast_metrics,
         )
