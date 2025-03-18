@@ -150,7 +150,7 @@ def multi_mask_processing(
     # TODO(carbonkat): add multi_label_dataset as flag in dataframe.
     if dataset not in multi_label_datasets:
         for mask in masks:
-            mask[mask != 0] = 255
+            #mask[mask != 0] = 255
             expanded_masks.append(mask)
         return images, expanded_masks
     else:

@@ -24,6 +24,7 @@ import torch
 log = RankedLogger(__name__, rank_zero_only=True)
 torch.set_float32_matmul_precision("medium")
 
+
 @task_wrapper
 def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """Trains the model. Can additionally evaluate on a testset, using best
@@ -73,6 +74,8 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         log.info("Logging hyperparameters!")
         log_hyperparameters(object_dict)
 
+    print(cfg.get("ckpt_path"))
+
     if cfg.get("train"):
         log.info("Starting training!")
         trainer.fit(
@@ -83,12 +86,16 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     if cfg.get("test"):
         log.info("Starting testing!")
-        ckpt_path = trainer.checkpoint_callback.best_model_path
+        #if cfg.get("train"):
+        #    ckpt_path = trainer.checkpoint_callback.best_model_path
+        #else:
+        ckpt_path = cfg.get("ckpt_path")
         if ckpt_path == "":
             log.warning(
                 "Best ckpt not found! Using current weights for testing..."
             )
             ckpt_path = None
+        print(ckpt_path)
         trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
         log.info(f"Best ckpt path: {ckpt_path}")
 

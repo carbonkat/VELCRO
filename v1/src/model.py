@@ -16,11 +16,13 @@ from torchmetrics import MinMetric
 from torchmetrics import F1Score
 from torchmetrics import Precision
 from torchmetrics import Recall
+from torchmetrics.classification import BinaryJaccardIndex
 import os
 import json
 from transformers import AutoTokenizer
 from transformers import CLIPTokenizer
 from transformers import AutoModel
+import random
 
 """
 from torchmetrics import Metric
@@ -225,6 +227,8 @@ class Model(pl.LightningModule):
             average="none",
         )
 
+        self.test_jaccard = BinaryJaccardIndex()
+
         # self.testing_output_preds = []
         # self.testing_output_labels = []
 
@@ -289,66 +293,6 @@ class Model(pl.LightningModule):
         # training starts, so it's worth to make sure validation metrics don't
         # store results from these checks
         self.loss.remove_duplicates = False
-        # self.tokenized_umls.to(self.device)
-
-    """
-    #def on_test_epoch_end(self) -> None:
-        all_preds = torch.cat(self.testing_output_preds, dim=0)
-        all_labels = torch.cat(self.testing_output_labels, dim=0)
-        mode = "test"
-        all_tp = 0
-        all_tp_fp = 0
-        all_tp_fn = 0
-        for i in all_labels.unique():
-            num_label_correct = torch.logical_and(
-                (all_preds == all_labels), (all_labels == i)
-            ).sum()
-            num_label_total = (all_labels == i).sum()
-            num_label_pred = (all_preds == i).sum()
-            if (
-                num_label_correct == 0
-                or num_label_pred == 0
-                or num_label_total == 0
-            ):
-                precision = torch.tensor(0.0).float()
-                recall = torch.tensor(0.0).float()
-                f1 = torch.tensor(0.0).float()
-            else:
-                precision = num_label_correct / num_label_pred
-                recall = num_label_correct / num_label_total
-                f1 = 2 * (precision * recall) / (precision + recall)
-            all_tp += num_label_correct
-            all_tp_fp += num_label_pred
-            all_tp_fn += num_label_total
-
-        all_precision = all_tp / all_tp_fp
-        all_recall = all_tp / all_tp_fn
-        all_f1 = 2 * (all_precision * all_recall) / (all_precision + all_recall)
-        self.log(
-            f"{mode}/man_calc_f1_full",
-            all_f1,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-        )
-        self.log(
-            f"{mode}/man_calc_precision_full",
-            all_precision,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-        )
-        self.log(
-            f"{mode}/man_calc_recall_full",
-            all_recall,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-        )
-    """
 
     def calculate_metrics(self, pred, labels, mode):
         """
@@ -356,9 +300,21 @@ class Model(pl.LightningModule):
         """
         # classification metrics
         gts = labels["class_indices"]
+        valid_mask = labels['valid_mask']
         # batch_preds = gts[pred]
         if not self.loss.remove_duplicates:
             batch_preds = pred
+            #print(batch_preds)
+            batch_preds[valid_mask == False] = -1
+            for i, val in enumerate(batch_preds.tolist()):
+                if val == -1:
+                    potential_classes = list(range(self.tokenized_umls.attention_mask.shape[0]))
+                    #print(gts[i].item(), potential_classes)
+                    potential_classes.remove(gts[i].item())
+                    #print(potential_classes)
+                    new_val = random.choice(potential_classes)
+                    batch_preds[i] = new_val
+            #print(batch_preds)
         else:
             batch_preds = gts[pred]
 
@@ -454,40 +410,6 @@ class Model(pl.LightningModule):
                 on_epoch=True,
                 batch_size=num_total,
             )
-            # print("before batchifying!", pred)
-            # print("after batchifying!", batch_preds)
-            # print("ground truths!", gts)
-        #    self.testing_output_preds.append(batch_preds)
-        #    self.testing_output_labels.append(batch_labels)
-        """
-        self.log(
-            f"{mode}/full_precision",
-            self.precision,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=True,
-            batch_size=num_total,
-            #sync_dist=True,
-        )
-        self.log(
-            f"{mode}/full_recall",
-            self.recall,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=True,
-            batch_size=num_total,
-            #sync_dist=True,
-        )
-        self.log(
-            f"{mode}/full_f1",
-            self.f1,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=True,
-            batch_size=num_total,
-            #sync_dist=True,
-        )
-        """
         self.log(
             f"{mode}/unique_batch_labels",
             len(batch_labels.unique()),
@@ -683,6 +605,33 @@ class Model(pl.LightningModule):
             # sync_dist=True,
         )
         self.calculate_metrics(preds, targets, "test")
+        pred_masks = batch['x']['image_input']['mask']
+        gt_masks = batch['y']['mask_gt']
+        gt_masks[gt_masks != 0] = 1
+        pred_masks[pred_masks != 0] = 1
+        #print(torch.unique(pred_masks), torch.unique(gt_masks))
+        self.test_jaccard(gt_masks, gt_masks)
+        #print(self.test_jaccard)
+        for pred_mask, gt_mask in zip(pred_masks, gt_masks):
+            print(pred_mask.shape, gt_mask.shape)
+            
+            print(pred_masks.sum(), gt_masks.sum())
+        intersection = (pred_masks * pred_masks).sum()
+        iou=None
+        if intersection == 0:
+            iou = 0.0
+        else:
+            union = torch.logical_or(pred_masks, pred_masks).to(torch.int).sum()
+            iou = intersection / union
+        print(iou)
+        self.log(
+            "test/iou",
+            self.test_jaccard,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            # sync_dist=True,
+        )
         return loss
 
     def setup(self, stage: str) -> None:

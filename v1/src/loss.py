@@ -238,11 +238,13 @@ class ContrastiveLoss(Loss):
             # Since we are guaranteed to not have duplicate similarity scores,
             # we treat the similarity matrix as a one-hot matrix with the true
             # class indices.
+            #valid_masks = y_true["valid_masks"]
             similarity_matrix = torch.zeros_like(similarity)
             similarity_matrix.scatter_(1, class_indices.unsqueeze(1), 1)
 
         # TODO(liamhebert): make sure the dimension is correct
         preds = torch.argmax(similarity, dim=1)
+        valid_masks = y_true["valid_mask"]
         # print(similarity)
         loss = torch.nn.functional.cross_entropy(similarity, similarity_matrix)
         return (loss, preds, {"contrastive_loss": loss})
@@ -295,7 +297,6 @@ class SegmentationLoss(Loss):
         #print("testing", pred_masks.shape, gold_masks.shape)
         dice = self.dice_loss(pred_masks, gold_masks)
         focal = self.focal_loss(pred_masks, gold_masks)
-
         loss = self.weight_focal * focal + self.weight_dice * dice
         return (loss, torch.empty(dice.shape), {"segmentation_loss": loss, "dice": dice, "focal": focal})
 

@@ -1,4 +1,4 @@
-_target_: data.medgeese_v1-clip.MedGeeseDataModule
+_target_: data.medgeese_v1-base_clip.MedGeeseDataModule
 
 data_dir: ${paths.data_dir}
 tensor_dir: ${paths.tensor_dir}
@@ -19,6 +19,5 @@ text_model_path: ${modality_encoder.text_model_name}
 debug: False
 
 data_source: "ground_truths"
-crop: False
-from_mem: False
-sam_masks: False
+crop: True
+from_mem: True
