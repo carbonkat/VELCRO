@@ -248,12 +248,8 @@ class MedGeeseDataModule(LightningDataModule):
                 if file.endswith(".npz"):
                     folders.append(os.path.basename(root))
                     master_files.append(os.path.join(root, file))
-        # master_files = master_files[0:25000]
-        # folders = folders[0:25000]
         mega = pd.DataFrame({"File": master_files, "Dataset": folders})
         cs = mega['Dataset'].value_counts()
-        #sample_df = mega.groupby("Dataset").sample(n=5000, replace=True, random_state=1)
-        #sample_df = sample_df.drop_duplicates()
         mega["index"] = 1
         mega["index"] = mega["index"].cumsum() - 1  # 0, 1, 2, 3 etc.
 
@@ -266,7 +262,7 @@ class MedGeeseDataModule(LightningDataModule):
         os.makedirs(tensor_dir, exist_ok=True)
         os.makedirs(tensor_dir + "/masks", exist_ok=True)
         os.makedirs(tensor_dir + "/images", exist_ok=True)
-
+        self.removed_masks = 0
         # Function for resizing and processing masks to convert them into tensors.
         def process(row):
             if (
@@ -357,65 +353,53 @@ class MedGeeseDataModule(LightningDataModule):
                 mask = mask.astype(np.uint8)
                 try:
                     label_ids = np.unique(mask)[1:]
-                    #if len(label_ids) > 20:
-                    #    label_ids = label_ids[0:20]
-                    #    print(len(label_ids))
-                    img = Image.fromarray(img) #.convert("RGB")
+                    img = Image.fromarray(img)
                     mask = Image.fromarray(mask)
-                    #print(img.size, mask.size)
-                    # Scaling factors for bounding boxes. This is
-                    # needed to reshape them after the image and
-                    # mask are resized to constant dimensions.
-                    x_scale = 1024 / mask.size[0]
-                    y_scale = 1024 / mask.size[1]
+                    # Only resize if necessary during processing to preserve disk space
                     if mask.size[0] >= 1024 or mask.size[1] >= 1024:
                         img = img.resize((1024, 1024), Image.LANCZOS)
                     img = PILToTensor()(img)
-
+                    bad_img_votes = 0
                     for k, label in enumerate(label_ids):
                         segment_mask = np.zeros_like(np.asarray(mask))
-                        segment_mask[np.asarray(mask) == label] = label
-                        y_indices, x_indices = np.where(segment_mask > 0)
+                        segment_mask[np.asarray(mask) == label] = 1
                         segment_mask = Image.fromarray(segment_mask)
-                        x_min, x_max = np.min(x_indices)*x_scale, np.max(x_indices)*x_scale
-                        y_min, y_max = np.min(y_indices)*y_scale, np.max(y_indices)*y_scale
+
+                        # If the mask would have been thrown out during the CLIP-VEL
+                        # run, throw it out here too to maintain consistency
+                        check = segment_mask.resize((224, 224), Image.NEAREST)
+                        resized_mask = segment_mask.resize((1024, 1024), Image.NEAREST)
+                        resized_mask = PILToTensor()(resized_mask)
+                        check = PILToTensor()(check)
+                        if len(np.unique(resized_mask.numpy())) < 2 or len(np.unique(check.numpy())) < 2:
+                            print(row.File)
+                            bad_img_votes += 1
+                            self.removed_masks += 1
+                            continue
+
+                        # Generate bounding box
+                        y_indices, x_indices = np.where(resized_mask.numpy()[0] > 0)
+                        x_min, x_max = np.min(x_indices), np.max(x_indices)
+                        y_min, y_max = np.min(y_indices), np.max(y_indices)
                         bbox = np.array([x_min, y_min, x_max, y_max]).astype(int).tolist()
-                        resize = False
+                        # Resize if needed
                         if mask.size[0] >= 1024 or mask.size[1] >= 1024:
-                            resize = True
-                        assert segment_mask.size == mask.size, segment_mask.size
-                        if resize:
-                            segment_mask = segment_mask.resize((1024, 1024), Image.LANCZOS)
-                            # Lanczos interpolation does not preserve binary nature of
-                            # masks, so must threshold after. Conversion to numpy speeds
-                            # up this process.
-                            segment_mask = PILToTensor()(segment_mask)
-                            segment_mask = segment_mask.numpy()
-                            segment_mask[segment_mask >= int(np.median(np.unique(segment_mask)))] = 1
-                            segment_mask[segment_mask != 1] = 0
-                            segment_mask = torch.from_numpy(segment_mask)
+                            segment_mask = resized_mask
                         else:
                             segment_mask = PILToTensor()(segment_mask)
 
+                        # Ensure mask is valid
+                        assert len(np.unique(segment_mask.numpy())) == 2
                         torch.save(
                             (segment_mask, y, candidate_text, [bbox]),
                             (f"{tensor_dir}/masks/{index}-{i}-{k}-{y}.pt"),
                         )
-                        torch.save(
-                            (img),
-                            (f"{tensor_dir}/images/{index}-{i}-{y}.pt"),
-                        )
-                        try:
-                            path = f"{tensor_dir}/masks/{index}-{i}-{k}-{y}.pt"
-                            split_basename = os.path.basename(path).split("-")
-                            stem = f"{split_basename[0]}-{split_basename[1]}-{split_basename[-1]}"
-                            test_tensor_dir = os.path.dirname(os.path.dirname(path))
-                            im_path = test_tensor_dir + f"/images/{stem}"
-                            test = torch.load(im_path, weights_only=False)
-                        except Exception as e:
-                            print(e)
-                            print(f"loading test failed! Tried to load {im_path}")
-
+                    if bad_img_votes == len(label_ids):
+                        continue
+                    torch.save(
+                        (img),
+                        (f"{tensor_dir}/images/{index}-{i}-{y}.pt"),
+                    )
                 except Exception as e:
                     print(f"Error on file when resizing: {row.File}")
                     if type(img) == Image:
@@ -430,6 +414,7 @@ class MedGeeseDataModule(LightningDataModule):
             delayed(process)(row)
             for row in tqdm(mega.itertuples(index=False), total=len(mega))
         )
+        print("Number of removed masks:", self.removed_masks)
         del text_tokenizer
 
     def setup(self, stage: str):
@@ -482,29 +467,14 @@ class MedGeeseDataModule(LightningDataModule):
         )
         print(self._train_device_batch_size, self._test_device_batch_size)
         tensor_dir = self.hparams.tensor_dir  # type: ignore
-        examples = list(glob(tensor_dir + "/masks/*.pt"))
+        examples = sorted(list(glob(tensor_dir + "/masks/*.pt")))
+        print(examples[0])
         random.seed(42)
         all_check = []
         for i in examples:
             count = int(os.path.basename(i).split("-")[-1].split(".")[0])
             #if count == 18:
             all_check.append(count)
-
-        # Some classes are drastically overrepresented in the dataset.
-        # In this case, some instances must be removed in order to ensure that
-        # the testing and validation sets do not become too biased
-        #removed_points = []
-        #for i in set(all_check):
-        #    if all_check.count(i) > 100000:
-        #        print(i, all_check.count(i))
-        #        reduced_sets = random.sample(
-        #            [point for point in examples if int(os.path.basename(point).split("-")[-1].split(".")[0]) == i],
-        #            int(all_check.count(i)/2)
-        #        )
-        #        removed_points.extend(reduced_sets)
-        #print("number of datapoints to remove", len(removed_points))
-        #examples = set(examples) - set(removed_points)
-        #examples = list(examples)
 
         # This is similar to MedSAM's data processing approach, where they randomly select
         # one bounding box from the set of possible bounding boxes for a single datapoint.
@@ -752,16 +722,13 @@ class MedGeeseDataset(Dataset):
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
         assert isinstance(bboxes, list), f"{type(bboxes)=}"
         img = ToPILImage()(img).convert("RGB")
-        mask = ToPILImage()(mask)
-        if mask.size[0] < 1024 or mask.size[1] < 1024:
-            img = img.resize((1024, 1024), Image.LANCZOS)
-            mask = mask.resize((1024, 1024), Image.LANCZOS)
-            mask = PILToTensor()(mask)
-            mask = mask.numpy()
-            mask[mask >= int(np.median(np.unique(mask)))] = 1
-            mask[mask != 1] = 0
-            mask = torch.from_numpy(mask)
+        assert len(np.unique(mask.numpy())) > 1
+        if img.size[0] < 1024 or img.size[1] < 1024:
             mask = ToPILImage()(mask)
+            mask = mask.resize((1024, 1024), Image.NEAREST)
+            mask = PILToTensor()(mask)
+            img = img.resize((1024, 1024), Image.LANCZOS)
+        mask = ToPILImage()(mask)
 
         mask = tv.Mask(mask).to(torch.int32)
         img = tv.Image(img)
