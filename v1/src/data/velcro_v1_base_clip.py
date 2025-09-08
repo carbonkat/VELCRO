@@ -11,7 +11,7 @@ import json
 import os
 import os.path as osp
 
-from data import medgeese_v1_utils as m_utils
+from data import velcro_v1_utils as m_utils
 from joblib import delayed
 from joblib import Parallel
 from lightning import LightningDataModule

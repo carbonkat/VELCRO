@@ -7,7 +7,7 @@ import json
 import os
 import os.path as osp
 
-from data import medgeese_v0_utils as utils
+from data import velcro_v0_utils as utils
 from joblib import delayed
 from joblib import Parallel
 from lightning import LightningDataModule
@@ -30,7 +30,7 @@ tqdm.pandas()
 
 logger = RankedLogger(__name__)
 
-class MedGeeseDataModule(LightningDataModule):
+class VELCRODataModule(LightningDataModule):
     """DataModule containing processed train/val/test dataloaders for our
     dataset.
 
@@ -369,19 +369,19 @@ class MedGeeseDataModule(LightningDataModule):
 
         if self._train_dataset is None:
             # make training dataset
-            self._train_dataset = MedGeeseDataset(
+            self._train_dataset = VELCRODataset(
                 items=train_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
             )
         if self._val_dataset is None:
             # make validation dataset
-            self._val_dataset = MedGeeseDataset(
+            self._val_dataset = VELCRODataset(
                 items=val_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
             )
         if self._test_dataset is None:
             # Make test dataset
-            self._test_dataset = MedGeeseDataset(
+            self._test_dataset = VELCRODataset(
                 items=test_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
             )
@@ -423,7 +423,7 @@ class MedGeeseDataModule(LightningDataModule):
         )
 
 
-class MedGeeseDataset(Dataset):
+class VELCRODataset(Dataset):
     """Dataset instance for a dataloader.
 
     Params:
