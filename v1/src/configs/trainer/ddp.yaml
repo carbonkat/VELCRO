@@ -2,7 +2,6 @@ defaults:
   - default
 
 strategy: "ddp_find_unused_parameters_true"
-#strategy: "fsdp"
 
 accelerator: gpu
 devices: 2
