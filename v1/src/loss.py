@@ -9,6 +9,7 @@ import torch
 from torch import nn
 from monai.losses import DiceLoss
 from monai.losses import FocalLoss
+from typing import Callable
 
 
 class Loss(ABC, nn.Module):
@@ -16,13 +17,15 @@ class Loss(ABC, nn.Module):
     Abstract class for loss functions.
     """
 
+    log: Callable
+
     @abstractmethod
     def __call__(
         self,
         roi_embeddings: torch.Tensor,
         candidate_embeddings: torch.Tensor,
         y_true: dict[str, torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the loss function.
 
         Args:
@@ -90,7 +93,7 @@ class ContrastiveLoss(Loss):
         super().__init__()
         self.remove_duplicates = remove_duplicates
         self.temperature = nn.Parameter(
-            torch.tensor(temperature), requires_grad=learnable_temperature
+            torch.tensor([temperature]), requires_grad=learnable_temperature
         )
 
     def __call__(
@@ -98,7 +101,7 @@ class ContrastiveLoss(Loss):
         roi_embeddings: torch.Tensor,
         candidate_embeddings: torch.Tensor,
         y_true: dict[str, torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the cross-entropy loss.
 
         Args:
@@ -114,7 +117,6 @@ class ContrastiveLoss(Loss):
         Returns:
             The cross-entropy loss value.
         """
-
         class_indices = y_true["class_indices"]
         flattened_batch, roi_embed_dim = roi_embeddings.shape
         num_candidates, cand_embed_dim = candidate_embeddings.shape
@@ -122,13 +124,13 @@ class ContrastiveLoss(Loss):
             assert flattened_batch == num_candidates
 
         assert roi_embed_dim == cand_embed_dim
-
         similarity = (
             self.cosine_similarity(
                 candidate_embeddings, roi_embeddings.unsqueeze(1)
             )
             / self.temperature
         )
+
         assert similarity.shape == (
             flattened_batch,
             num_candidates,
@@ -199,7 +201,7 @@ class ContrastiveLoss(Loss):
                 "ij, ij -> ij", similarity_matrix, maybe_repeated_indices
             )
 
-            # Now that we have our beautiful matrix, we can now further simplify
+            # Now that we have our matrix, we can now further simplify
             # to identify the columns that are duplicates. We do this by summing
             # along the rows, clamping between 0 and 1, and then tiling the result
             # to match the number of candidates.
@@ -237,13 +239,12 @@ class ContrastiveLoss(Loss):
             similarity_matrix = torch.zeros_like(similarity)
             similarity_matrix.scatter_(1, class_indices.unsqueeze(1), 1)
 
-        # TODO(liamhebert): make sure the dimension is correct
         preds = torch.argmax(similarity, dim=1)
-
-        return (
-            torch.nn.functional.cross_entropy(similarity, similarity_matrix),
-            preds,
-        )
+        # Retrieve the top 3 predictions for each roi by default
+        k = 3 if similarity.shape[0] >= 3 else similarity.shape[0]
+        _, topk_indices = torch.topk(similarity, k, dim=1)
+        loss = torch.nn.functional.cross_entropy(similarity, similarity_matrix)
+        return (loss, preds, topk_indices, {"contrastive_loss": loss})
 
 
 class SegmentationLoss(Loss):
@@ -279,7 +280,7 @@ class SegmentationLoss(Loss):
         self,
         pred_masks: torch.Tensor,
         gold_masks: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Compute the segmentation loss.
 
         Args:
@@ -290,11 +291,10 @@ class SegmentationLoss(Loss):
         Returns:
             The segmentation loss value.
         """
-
         dice = self.dice_loss(pred_masks, gold_masks)
         focal = self.focal_loss(pred_masks, gold_masks)
-
-        return self.weight_focal * focal + self.weight_dice * dice
+        loss = self.weight_focal * focal + self.weight_dice * dice
+        return (loss, torch.empty(dice.shape), {"segmentation_loss": loss, "dice": dice, "focal": focal})
 
 
 class CombinedLoss(Loss):
@@ -326,6 +326,7 @@ class CombinedLoss(Loss):
         self.weight_segmentation = weight_segmentation
         self.contrastive_loss = contrastive_loss
         self.segmentation_loss = segmentation_loss
+        self.remove_duplicates = True
 
     def __call__(
         self,
@@ -352,12 +353,20 @@ class CombinedLoss(Loss):
         Returns:
             The combined loss value.
         """
-        l1, preds = self.contrastive_loss(
+        if self.remove_duplicates:
+            self.contrastive_loss.remove_duplicates = True
+        else:
+            self.contrastive_loss.remove_duplicates = False
+
+        l1, preds, topk, contrast_metrics = self.contrastive_loss(
             roi_embeddings, candidate_embeddings, y_true
         )
         gold_masks = y_true["gold_mask"]
-        l2 = self.segmentation_loss(predicted_masks, gold_masks)
+        l2, _, seg_metrics = self.segmentation_loss(predicted_masks, gold_masks)
+        contrast_metrics.update(seg_metrics)
         return (
             self.weight_contrastive * l1 + self.weight_segmentation * l2,
-            preds,
+            (preds, predicted_masks),
+            topk,
+            contrast_metrics,
         )

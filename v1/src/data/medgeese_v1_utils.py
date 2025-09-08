@@ -1,6 +1,6 @@
 """
 Various utility functions for processing the specific datasets that make up the
-MedGeese v1 dataset.
+VELCRO v1 dataset.
 """
 
 import os
@@ -101,7 +101,8 @@ def extract_2d_masks(
         {image.shape=} and (mask) {mask.shape=}."
 
     for i in range(mask.shape[0]):
-        if len(np.unique(mask[i])) == 1:
+        if len(np.unique(mask[i])) == 1 and np.unique(mask[i])[0] == 0:
+            print("gothere!")
             continue
         else:
             images.append(image[i])
@@ -149,7 +150,7 @@ def multi_mask_processing(
     # TODO(carbonkat): add multi_label_dataset as flag in dataframe.
     if dataset not in multi_label_datasets:
         for mask in masks:
-            mask[mask != 0] = 255
+            #mask[mask != 0] = 255
             expanded_masks.append(mask)
         return images, expanded_masks
     else:

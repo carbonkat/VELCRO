@@ -1,22 +1,23 @@
-_target_: data.medgeese_v1_sam.VELCRODataModule
+_target_: data.medgeese_v1-base_clip.VELCRODataModule
 
 data_dir: ${paths.data_dir}
 tensor_dir: ${paths.tensor_dir}
 image_dir: ${paths.image_dir}
 
 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
-train_batch_size: 8
+train_batch_size: 32
 test_batch_size: 32
 train_val_test_split: [0.8, 0.1, 0.1]
 
-num_workers: 12
+num_workers: 8
 force_remake: False # Set from commandline "data.force_remake=True"
-pin_memory: False
-prefetch_factor: 3
-persistent_workers: True
+pin_memory: True
 
-sam_tokenizer_path: ${modality_encoder.sam_tokenizer_name}
+image_model_path: ${modality_encoder.vision_model_name}
 text_model_path: ${modality_encoder.text_model_name}
-from_mem: True
 
 debug: False
+
+data_source: "ground_truths"
+crop: True
+from_mem: True

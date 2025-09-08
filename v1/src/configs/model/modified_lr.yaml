@@ -1,6 +1,6 @@
 defaults:
-  - encoder: sam_medgeese
-  - loss: combined_loss
+  - encoder: clip_medgeese
+  - loss: contrastive_loss
 
 _target_: model.Model
 
@@ -8,9 +8,8 @@ optimizer:
   _target_: torch.optim.AdamW
   # Must be partial to allow for the parameters to be passed in.
   _partial_: true
-  lr: 0.0001
+  lr: 1e-5
   weight_decay: 0.0
-  fused: False
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
@@ -20,8 +19,5 @@ scheduler:
   factor: 0.1
   patience: 10
 
-data_dir: ${paths.data_dir}
-
 # compile model for faster training with pytorch 2.0
-compile: False
-kb_path: ${paths.data_dir}/v1/UMLS_formatted.json
+compile: True

@@ -30,10 +30,6 @@ tqdm.pandas()
 
 logger = RankedLogger(__name__)
 
-# TODO(liamhebert): Throughout this code, we only tokenize the images in the
-# "get_item" method. We should instead tokenize ahead of time.
-
-
 class MedGeeseDataModule(LightningDataModule):
     """DataModule containing processed train/val/test dataloaders for our
     dataset.

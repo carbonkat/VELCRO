@@ -1,7 +1,9 @@
-_target_: components.sam_medgeese.SAMMedGeese
+_target_: components.sam_medgeese.SAMVELCRO
 
 vision_model_path: ${modality_encoder.vision_model_name}
 text_model_path: ${modality_encoder.text_model_name}
 
 projection_dim: 256
 sequential: True
+freeze_text_enc: True
+freeze_img_enc: False

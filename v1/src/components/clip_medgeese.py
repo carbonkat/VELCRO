@@ -1,5 +1,5 @@
 """
-Code related to Medgeese v0.
+Code related to VELCRO v0.
 """
 
 from model import TwoTowerEncoder
@@ -9,9 +9,11 @@ from torch import Tensor
 from transformers import AutoModel
 from transformers import CLIPVisionModel
 from transformers import ViTModel
+from transformers import CLIPTextModelWithProjection
+from transformers import CLIPVisionModelWithProjection
 
 
-class ClipMedGeese(TwoTowerEncoder):
+class ClipVELCRO(TwoTowerEncoder):
     """
     Model that matches patch embeddings to text embeddings, similar to CLIP.
     """
@@ -35,17 +37,15 @@ class ClipMedGeese(TwoTowerEncoder):
                 model.
             vision_model_path (str): The huggingface model identifier for the
                 vision model.
-            patch_size (int): The cnn patch size used for tokenization. This is
-                used to expand the pixel-level mask to the correct image patches.
-                This number can often be retrieved by looking at the model's
-                name. For example: "openai/clip-vit-large-patch14" has a patch
-                size of 14.
+            is_clip (bool): Whether the vision model is a CLIP model or not.
+            projection_dim (int): The dimension to project the embeddings to.
         """
         super().__init__()
         self.text_model_path = text_model_path
-        self.text_model = AutoModel.from_pretrained(text_model_path)
+        self.is_clip = is_clip
+
         if is_clip:
-            self.vision_model = CLIPVisionModel.from_pretrained(
+            self.vision_model = CLIPVisionModelWithProjection.from_pretrained(
                 vision_model_path
             )
             # Weirdly, the CLIP model does not use the layer norm if you access
@@ -55,18 +55,24 @@ class ClipMedGeese(TwoTowerEncoder):
             self.vision_layer_norm = (
                 self.vision_model.vision_model.post_layernorm
             )
+            self.vision_projection = self.vision_model.visual_projection
+            self.text_model = CLIPTextModelWithProjection.from_pretrained(
+                text_model_path
+            )
+
         else:
             self.vision_model = ViTModel.from_pretrained(vision_model_path)
             self.vision_layer_norm = nn.Identity()
+            self.text_model = AutoModel.from_pretrained(text_model_path)
+            text_embedding_dim = self.text_model.config.hidden_size
+            vision_embedding_dim = self.vision_model.config.hidden_size
+            self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
+            self.vision_projection = nn.Linear(
+                vision_embedding_dim, projection_dim
+            )
 
         self.text_model
         self.vision_model
-
-        text_embedding_dim = self.text_model.config.hidden_size
-        vision_embedding_dim = self.vision_model.config.hidden_size
-
-        self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
-        self.vision_projection = nn.Linear(vision_embedding_dim, projection_dim)
 
         self.patch_size = self.vision_model.config.patch_size
 
@@ -109,10 +115,6 @@ class ClipMedGeese(TwoTowerEncoder):
             representing the candidate embeddings and the second representing the
             image embeddings.
         """
-        # TODO(liamhebert): Ideally, we should have "img" be a field and we map
-        # it to self.vision model (ie: self.vision_model(**image_input["img"]))
-        # That way it can be flexible in case other models have different input
-        # types.
         img = image_input["img"]
         img = img.squeeze(1)
         img_embed = self.vision_model(pixel_values=img)
@@ -144,7 +146,10 @@ class ClipMedGeese(TwoTowerEncoder):
         # Then we divide the mask embeddings by the mask size to get the average
         normalized_mask_embeds = mask_embeds / mask_size
 
-        candidate_embed = self.text_model(**candidate_input).pooler_output
-        candidate_embed = self.text_projection(candidate_embed)
+        if not self.is_clip:
+            candidate_embed = self.text_model(**candidate_input).pooler_output
+            candidate_embed = self.text_projection(candidate_embed)
+        else:
+            candidate_embed = self.text_model(**candidate_input).text_embeds
 
-        return candidate_embed, normalized_mask_embeds
+        return normalized_mask_embeds, candidate_embed

@@ -39,6 +39,7 @@ def get_trainer(params: TrainerParameters, experiment_name: str) -> Trainer:
 
     # init trainer
     trainer = Trainer(
+        strategy="ddp_find_unused_parameters_true",
         max_epochs=params.MAX_EPOCHS,
         logger=wandb.WandbLogger(
             project="MedGeese",
