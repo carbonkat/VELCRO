@@ -1,32 +1,31 @@
 """
-Code related to Medgeese v2.
+Code related to VELCRO v2.
 """
 
 from model import TwoTowerEncoder
 import torch
 from torch import nn
 from torch import Tensor
-from transformers import AutoModel
-from segment_anything import sam_model_registry
-from transformers import AutoProcessor
-import gc
+from transformers import AutoModel, AutoProcessor, SamImageProcessor
 
-class SAMMedGeese(TwoTowerEncoder):
+class SAMVELCRO(TwoTowerEncoder):
     """
     Model that generates masks and matches patch embeddings
     to text embeddings using SAM.
     """
 
     text_model: AutoModel
-    vision_model: sam_model_registry  # type: ignore
+    vision_model: AutoModel
     patch_size: int = 16
 
     def __init__(
         self,
         text_model_path: str = "bert-base-uncased",
-        vision_model_path: str = "sam_vit_b.pth",
+        vision_model_path: str = "facebook/sam-vit-base",
         projection_dim: int = 512,
         sequential: bool = True,
+        freeze_text_enc: bool = False,
+        freeze_img_enc: bool = False,
     ):
         """Constructs the model.
 
@@ -40,17 +39,33 @@ class SAMMedGeese(TwoTowerEncoder):
                 which the text and ROI embeddings will be projected into.
             sequential (bool): whether to generate ROI embeddings sequentially (in
                 the same style as V1-CLIP), or using native mask embeddings (SAM)
+            freeze_text_enc (bool): whether to freeze the text encoder
+            freeze_img_enc (bool): whether to freeze the image encoder
         """
         super().__init__()
         self.text_model_path = text_model_path
         self.sequential = sequential
+
         self.text_model = AutoModel.from_pretrained(text_model_path)
-        self.vision_model = AutoModel.from_pretrained("facebook/sam-vit-base")
+        self.vision_model = AutoModel.from_pretrained(vision_model_path)
+
         text_embedding_dim = self.text_model.config.hidden_size
-        img_embedding_dim = self.vision_model.config.vision_config.hidden_size
         self.text_projection = nn.Linear(text_embedding_dim, projection_dim)
-        #self.vision_projection = nn.Linear(img_embedding_dim, projection_dim)
-        self.processor = AutoProcessor.from_pretrained("facebook/sam-vit-base")
+
+        # SAMImageProcessor is used to post-process masks into the original image size
+        self.processor = SamImageProcessor.from_pretrained(vision_model_path)
+
+        # Freeze encoders if specified
+        if freeze_img_enc:
+            for name, layer in self.vision_model.named_children():
+                if name in ['vision_encoder']:
+                    for param in layer.parameters():
+                        param.requires_grad = False
+        if freeze_text_enc:
+            for name, layer in self.text_model.named_children():
+                if name in ['encoder']:
+                    for param in layer.parameters():
+                        param.requires_grad = False
 
     def forward(
         self,
@@ -59,7 +74,6 @@ class SAMMedGeese(TwoTowerEncoder):
         bounding_boxes: Tensor,
     ) -> tuple[Tensor, Tensor]:
         """Generates the required embeddings for the text and image inputs.
-
         Args:
             candidate_input (dict): Dict of the inputs required for the candidate
                 model.
@@ -73,9 +87,9 @@ class SAMMedGeese(TwoTowerEncoder):
             computed SAM mask(s).
         """
         img = image_input["img"]
-        # NOTE: this is bad practice and for some reason only occurs in the test set; should definitely hunt down the cause of this!
-        if len(img.shape) > 4:
-            img = img.squeeze()
+        img = img.squeeze(1)
+
+        # Prepare embeddings to be passed into the SAM mask decoder
         sparse_prompt_embeddings, dense_prompt_embeddings = (
             self.vision_model.prompt_encoder(
                 input_points=None,
@@ -88,14 +102,14 @@ class SAMMedGeese(TwoTowerEncoder):
         image_positional_embeddings = (
             self.vision_model.get_image_wide_positional_embeddings()
         )
-        # repeat with batch size
         batch_size = image_embeddings.shape[0]
         image_positional_embeddings = image_positional_embeddings.repeat(
             batch_size, 1, 1, 1
         )
         batch_size, num_channels, height, width = image_embeddings.shape
         point_batch_size = sparse_prompt_embeddings.shape[1]
-        # Concatenate output tokens
+
+        # Concatenate output tokens (IoU tokens and mask embedding tokens)
         output_tokens = torch.cat(
             [
                 self.vision_model.mask_decoder.iou_token.weight,
@@ -103,6 +117,8 @@ class SAMMedGeese(TwoTowerEncoder):
             ],
             dim=0,
         )
+        # Since the model expects one bounding box per image, we need to
+        # ensure that the bounding box prompt embeddings are in the correct shape.
         assert point_batch_size == 1, point_batch_size
         output_tokens = output_tokens.repeat(batch_size, point_batch_size, 1, 1)
 
@@ -113,6 +129,7 @@ class SAMMedGeese(TwoTowerEncoder):
 
         # Expand per-image data in batch direction to be per-point
         image_embeddings = image_embeddings + dense_prompt_embeddings
+
         # Run the transformer, image_positional_embedding are consumed
         point_embedding, image_embeddings, _ = (
             self.vision_model.mask_decoder.transformer(
@@ -124,12 +141,13 @@ class SAMMedGeese(TwoTowerEncoder):
                 output_attentions=None,
             )
         )
-
-        iou_token_out = point_embedding[:, :, 0, :]
+        # Retrieve the mask and IoU tokens from the decoder output.
+        # Ignore the bounding box token, which is the first token.
         mask_tokens_out = point_embedding[
             :, :, 1:(1 + self.vision_model.mask_decoder.num_mask_tokens), :
         ]
-
+        # Reshape and upscale image embeddings to be in the correct shape 
+        # for the hypernetwork prediction of masks.
         image_embeddings = image_embeddings.transpose(2, 3).reshape(
             batch_size * point_batch_size, num_channels, height, width
         )
@@ -146,6 +164,7 @@ class SAMMedGeese(TwoTowerEncoder):
             self.vision_model.mask_decoder.upscale_conv2(upscaled_embedding)
         )
 
+        # Use the mask tokens and the upscaled embeddings to predict masks
         hyper_in_list = []
         for i in range(self.vision_model.mask_decoder.num_mask_tokens):
             current_mlp = (
@@ -161,24 +180,25 @@ class SAMMedGeese(TwoTowerEncoder):
         masks = (hyper_in @ upscaled_embedding).reshape(
             batch_size, point_batch_size, -1, height, width
         )
-
-        multimask_output = False
-        # Select the correct mask or masks for output
-        if multimask_output:
-            mask_slice = slice(1, None)
-        else:
-            mask_slice = slice(0, 1)
+        # Select the correct mask or masks for output. In our case,
+        # we are only interested in the first mask.
+        mask_slice = slice(0, 1)
 
         masks = masks[:, :, mask_slice, :, :]
-
+        # Get the mask embedding of the first mask. This is our contextual
+        # mention/RoI embedding.
         roi_embeddings = mask_tokens_out[:, :, 0, :]
 
         roi_embeddings = roi_embeddings.squeeze(1)
+
         assert len(roi_embeddings.shape) == 2, roi_embeddings.shape
 
+        # Embed the candidate text using the BERT text encoder
         candidate_embed = self.text_model(**candidate_input).pooler_output
         candidate_embed = self.text_projection(candidate_embed)
 
+        # Post-process the masks to be in the original image size. This
+        # requires the original image size, which we assume to be 1024x1024.
         masks = self.processor.post_process_masks(
             masks,
             original_sizes=[(1024, 1024)] * masks.shape[0],
@@ -186,6 +206,7 @@ class SAMMedGeese(TwoTowerEncoder):
             binarize=False,
             return_tensors="pt",
         )
+
         upscaled_masks = torch.stack(masks, dim=0).squeeze(1)
 
         return (
@@ -193,45 +214,3 @@ class SAMMedGeese(TwoTowerEncoder):
             candidate_embed,
             upscaled_masks,
         )
-
-    def sequential_roi(
-        self, masks: torch.Tensor, last_hidden_state: torch.Tensor
-    ):
-        """
-        Perform ROI embedding sequentially in the same manner as v1-CLIP.
-
-        Args:
-            masks (torch.Tensor): the upscaled masks produced by the
-                mask decoder after post-processing and binarization.
-                Expected shape is (B, C, H, W)
-            last_hidden_state (torch.Tensor): the image embedding retrieved from
-                the ViT image encoder before layer normalization.
-                Expected shape is (B, 64, 64, image embedding dim)
-
-        Returns:
-            torch.Tensor: normalized region of interest embeddings.
-        """
-        # Take the upscaled masks and apply convolution to project
-        # into hidden image embedding space.
-        masks = (self.expand_mask_kernel(masks) > 0).float()
-        masks = masks.flatten(start_dim=1).float()
-
-        last_hidden_state = last_hidden_state.flatten(start_dim=1, end_dim=2)
-        img_embed = self.vision_norm(last_hidden_state)
-
-        # Project into desired shared image-text space.
-        projected_img_embed = self.vision_projection(img_embed)
-        mask_embeds = torch.einsum("bij, bi -> bj", projected_img_embed, masks)
-        mask_embeds = mask_embeds.squeeze(-1)
-        # Since the dot product above sums the tokens that make up the mask, we
-        # now have to normalize the mask embeddings by the number of tokens that
-        # make up the mask (ie: taking the mean). This is because some masks can
-        # be larger then others.
-
-        # First, we calculate the number of mask tokens per image. This is just
-        # done by summing the mask over the last dimension.
-        mask_size = masks.sum(dim=-1, keepdim=True)
-        # Then we divide the mask embeddings by the mask size to get the average
-        normalized_mask_embeds = mask_embeds / mask_size
-
-        return normalized_mask_embeds
