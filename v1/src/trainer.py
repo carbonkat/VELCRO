@@ -42,7 +42,7 @@ def get_trainer(params: TrainerParameters, experiment_name: str) -> Trainer:
         strategy="ddp_find_unused_parameters_true",
         max_epochs=params.MAX_EPOCHS,
         logger=wandb.WandbLogger(
-            project="MedGeese",
+            project="VELCRO",
             name=f"{experiment_name}-{user}-{formatted_date}",
         ),
         callbacks=[ModelCheckpoint(monitor="val/loss", mode="min")],

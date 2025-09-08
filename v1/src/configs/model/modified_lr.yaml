@@ -1,5 +1,5 @@
 defaults:
-  - encoder: clip_medgeese
+  - encoder: clip_velcro
   - loss: contrastive_loss
 
 _target_: model.Model

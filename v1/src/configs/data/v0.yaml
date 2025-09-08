@@ -1,4 +1,4 @@
-_target_: data.medgeese_v0.VELCRODataModule
+_target_: data.velcro_v0.VELCRODataModule
 
 data_dir: ${paths.data_dir}
 tensor_dir: ${paths.tensor_dir}

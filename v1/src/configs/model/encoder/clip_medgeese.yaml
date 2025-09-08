@@ -1,4 +1,4 @@
-_target_: components.clip_medgeese.ClipVELCRO
+_target_: components.clip_velcro.ClipVELCRO
 
 text_model_path: ${modality_encoder.text_model_name}
 vision_model_path: ${modality_encoder.vision_model_name}

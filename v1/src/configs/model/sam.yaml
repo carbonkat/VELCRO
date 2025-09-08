@@ -1,5 +1,5 @@
 defaults:
-  - encoder: sam_medgeese
+  - encoder: sam_velcro
   - loss: combined_loss
 
 _target_: model.Model
