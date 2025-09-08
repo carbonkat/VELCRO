@@ -117,8 +117,6 @@ class ContrastiveLoss(Loss):
         Returns:
             The cross-entropy loss value.
         """
-        # print("roi embeddings shape", roi_embeddings.shape)
-        # print("candidate text shape", candidate_embeddings.shape)
         class_indices = y_true["class_indices"]
         flattened_batch, roi_embed_dim = roi_embeddings.shape
         num_candidates, cand_embed_dim = candidate_embeddings.shape
@@ -132,7 +130,7 @@ class ContrastiveLoss(Loss):
             )
             / self.temperature
         )
-        # print("similarity shape", similarity.shape, flattened_batch, num_candidates)
+
         assert similarity.shape == (
             flattened_batch,
             num_candidates,
@@ -203,7 +201,7 @@ class ContrastiveLoss(Loss):
                 "ij, ij -> ij", similarity_matrix, maybe_repeated_indices
             )
 
-            # Now that we have our beautiful matrix, we can now further simplify
+            # Now that we have our matrix, we can now further simplify
             # to identify the columns that are duplicates. We do this by summing
             # along the rows, clamping between 0 and 1, and then tiling the result
             # to match the number of candidates.
@@ -238,16 +236,15 @@ class ContrastiveLoss(Loss):
             # Since we are guaranteed to not have duplicate similarity scores,
             # we treat the similarity matrix as a one-hot matrix with the true
             # class indices.
-            #valid_masks = y_true["valid_masks"]
             similarity_matrix = torch.zeros_like(similarity)
             similarity_matrix.scatter_(1, class_indices.unsqueeze(1), 1)
 
-        # TODO(liamhebert): make sure the dimension is correct
         preds = torch.argmax(similarity, dim=1)
-        valid_masks = y_true["valid_mask"]
-        # print(similarity)
+        # Retrieve the top 3 predictions for each roi by default
+        k = 3 if similarity.shape[0] >= 3 else similarity.shape[0]
+        _, topk_indices = torch.topk(similarity, k, dim=1)
         loss = torch.nn.functional.cross_entropy(similarity, similarity_matrix)
-        return (loss, preds, {"contrastive_loss": loss})
+        return (loss, preds, topk_indices, {"contrastive_loss": loss})
 
 
 class SegmentationLoss(Loss):
@@ -294,7 +291,6 @@ class SegmentationLoss(Loss):
         Returns:
             The segmentation loss value.
         """
-        #print("testing", pred_masks.shape, gold_masks.shape)
         dice = self.dice_loss(pred_masks, gold_masks)
         focal = self.focal_loss(pred_masks, gold_masks)
         loss = self.weight_focal * focal + self.weight_dice * dice
@@ -362,15 +358,15 @@ class CombinedLoss(Loss):
         else:
             self.contrastive_loss.remove_duplicates = False
 
-        l1, preds, contrast_metrics = self.contrastive_loss(
+        l1, preds, topk, contrast_metrics = self.contrastive_loss(
             roi_embeddings, candidate_embeddings, y_true
         )
         gold_masks = y_true["gold_mask"]
         l2, _, seg_metrics = self.segmentation_loss(predicted_masks, gold_masks)
-        #print("contrastive loss", l1, " segmentation metrics", l2, " full_loss", l1+l2)
         contrast_metrics.update(seg_metrics)
         return (
             self.weight_contrastive * l1 + self.weight_segmentation * l2,
-            preds,
+            (preds, predicted_masks),
+            topk,
             contrast_metrics,
         )

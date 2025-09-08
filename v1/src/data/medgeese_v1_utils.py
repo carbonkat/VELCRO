@@ -1,6 +1,6 @@
 """
 Various utility functions for processing the specific datasets that make up the
-MedGeese v1 dataset.
+VELCRO v1 dataset.
 """
 
 import os

@@ -24,6 +24,12 @@ import torch
 log = RankedLogger(__name__, rank_zero_only=True)
 torch.set_float32_matmul_precision("medium")
 
+def annotate_module_names(module, prefix=""):
+    for name, child in module.named_children():
+        full_name = f"{prefix}.{name}" if prefix else name
+        child._fsdp_wrap_name = full_name
+        annotate_module_names(child, full_name)
+
 
 @task_wrapper
 def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -60,7 +66,6 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     trainer: Trainer = hydra.utils.instantiate(
         cfg.trainer, callbacks=callbacks, logger=logger
     )
-
     object_dict = {
         "cfg": cfg,
         "datamodule": datamodule,
@@ -75,7 +80,6 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         log_hyperparameters(object_dict)
 
     print(cfg.get("ckpt_path"))
-
     if cfg.get("train"):
         log.info("Starting training!")
         trainer.fit(
@@ -86,16 +90,16 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     if cfg.get("test"):
         log.info("Starting testing!")
-        #if cfg.get("train"):
-        #    ckpt_path = trainer.checkpoint_callback.best_model_path
-        #else:
-        ckpt_path = cfg.get("ckpt_path")
+        if cfg.get("train"):
+            ckpt_path = trainer.checkpoint_callback.best_model_path
+        else:
+            ckpt_path = cfg.get("ckpt_path")
+        print(ckpt_path, "found checkpoint!")
         if ckpt_path == "":
             log.warning(
                 "Best ckpt not found! Using current weights for testing..."
             )
             ckpt_path = None
-        print(ckpt_path)
         trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
         log.info(f"Best ckpt path: {ckpt_path}")
 
