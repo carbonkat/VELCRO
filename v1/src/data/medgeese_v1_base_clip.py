@@ -42,11 +42,7 @@ tqdm.pandas()
 
 logger = RankedLogger(__name__)
 
-# TODO(liamhebert): Throughout this code, we only tokenize the images in the
-# "get_item" method. We should instead tokenize ahead of time.
-
-
-class MedGeeseDataModule(LightningDataModule):
+class VELCRODataModule(LightningDataModule):
     """DataModule containing processed train/val/test dataloaders for our
     dataset.
 
@@ -133,7 +129,7 @@ class MedGeeseDataModule(LightningDataModule):
         assert isinstance(tensor_dir, str)
         assert isinstance(image_dir, str)
 
-        # TODO(liamhebert): Change osp.exists check to ensure we have exactly the
+        # TODO: Change osp.exists check to ensure we have exactly the
         # correct number of processed files, rather then just check if the
         # directory exists.
         if not self.hparams.force_remake and osp.exists(tensor_dir):
@@ -218,7 +214,13 @@ class MedGeeseDataModule(LightningDataModule):
 
         os.makedirs(tensor_dir, exist_ok=True)
         os.makedirs(tensor_dir + "/masks", exist_ok=True)
+        os.makedirs(tensor_dir + "/annotations", exist_ok=True)
         os.makedirs(tensor_dir + "/images", exist_ok=True)
+
+        # Optional variables to track the incidence of invalid masks and images
+        self.bad_masks = 0
+        self.bad_imgs = 0
+
         # Function for resizing and processing masks to convert them into tensors.
         def process(row):
             if (
@@ -234,10 +236,9 @@ class MedGeeseDataModule(LightningDataModule):
             mask = packed_data["gts"]
             if len(np.unique(mask)) == 1 and np.unique(mask)[0] == 0:
                 print(row.File, np.unique(mask))
-                # throw_count+=1
                 return
 
-            # TODO(kathryncarbone): add test to make sure the mask and
+            # TODO(carbonkat): add test to make sure the mask and
             # image shape are the same
 
             if len(img.shape) > 2 and img.shape[2] != 3:
@@ -281,7 +282,6 @@ class MedGeeseDataModule(LightningDataModule):
                 candidate_terms = [umls_terms[potential_terms[0]]] * len(imgs)
 
             else:
-            #elif np.max(masks[0]) == 255:
                 # Extract appropriate concept from dataset files where
                 # the correct concept is embedded in the file name.
                 # In this case, masks are already standardized but the
@@ -298,15 +298,8 @@ class MedGeeseDataModule(LightningDataModule):
                 ] * len(imgs)
                 if candidate_terms[0] is None:
                     return
-            #else:
-                # Otherwise, match appropriate term to mask label for all masks.
-                #candidate_mini_terms, masks = m_utils.match_term_mask(
-                #    masks, imgs, potential_terms
-                #)
-                #candidate_terms = [
-                #    umls_terms[term] for term in candidate_mini_terms
-                #]
 
+            # Iterate through all image, mask, and term triplets
             for i, (img, mask, term) in enumerate(
                 zip(imgs, masks, candidate_terms)
             ):
@@ -314,12 +307,46 @@ class MedGeeseDataModule(LightningDataModule):
                 y = term["idx"]
                 candidate_text = term["desc"]
                 mask = mask.astype(np.uint8)
+
                 try:
+                    # First get all unique labels in the mask. If there is more than one,
+                    # we need to create separate masks for each label.
                     label_ids = np.unique(mask)[1:]
-                    if self.hparams.crop:
-                        for k, label in enumerate(label_ids):
-                            segment_mask = np.zeros_like(mask)
-                            segment_mask[mask == label] = label
+                    bad_masks_count = 0
+                    mask = Image.fromarray(mask)
+
+                    # Iterate through all unique labels (mention instances) in the mask
+                    for k, label in enumerate(label_ids):
+                        segment_mask = np.zeros_like(np.asarray(mask))
+                        segment_mask[np.asarray(mask) == label] = 1
+                        segment_mask = Image.fromarray(segment_mask)
+                        assert segment_mask.size == mask.size, segment_mask.size
+                        
+                        # Resize to 224x224 for ViT input. Also resize to 1024x1024 to ensure that
+                        # masks are valid for both SAM and CLIP (this prevents issues where some
+                        # masks are valid at 224x224 but become empty when resized to 1024x1024 and
+                        # vice versa).
+                        resized = segment_mask.resize((224, 224), Image.NEAREST).convert("RGB")
+                        resized = PILToTensor()(resized)
+                        resized = resized.numpy()
+                        check = segment_mask.resize((1024, 1024), Image.NEAREST).convert("RGB")
+                        check = PILToTensor()(check)
+                        check = check.numpy()
+                        
+                        # Enumerate counters for bad masks. An image is only bad if all
+                        # masks related to it are bad.
+                        if len(np.unique(check)) == 1 or len(np.unique(resized)) == 1:
+                            self.bad_masks += 1
+                            bad_masks_count += 1
+                            continue
+                        
+                        # Crop masks and images to bounding box of the visual mention if specified
+                        if self.hparams.crop:
+                            new_mask = np.asarray(mask)
+                            segment_mask = np.zeros_like(new_mask)
+                            segment_mask[new_mask == label] = 1
+                            assert segment_mask.shape == new_mask.shape, segment_mask.shape
+
                             y_indices, x_indices = np.where(segment_mask > 0)
                             x_min, x_max = np.min(x_indices), np.max(x_indices)
                             y_min, y_max = np.min(y_indices), np.max(y_indices)
@@ -327,29 +354,29 @@ class MedGeeseDataModule(LightningDataModule):
                                 y_min:y_max,
                                 x_min:x_max,
                             ]
-
+                            
+                            # After cropping, resize the image back to 224x224 for ViT input
                             cropped_img = Image.fromarray(cropped_img).convert("RGB")
                             cropped_img = cropped_img.resize((224, 224), Image.LANCZOS)
-                            cropped_img = PILToTensor()(cropped_img)
-                            torch.save(
-                                (cropped_img, y, candidate_text),
-                                (f"{tensor_dir}/masks/{index}-{i}-{k}-{y}.pt"),
+                            cropped_img.save(
+                                (f"{tensor_dir}/masks/{index}-{i}-{k}-{y}.png"),
                             )
-                        img = Image.fromarray(img).convert("RGB")
-                        img = img.resize((224, 224), Image.LANCZOS)
-                        img = PILToTensor()(img)
+                            torch.save(
+                                (y, candidate_text),
+                                (f"{tensor_dir}/annotations/{index}-{i}-{k}-{y}.pt")
+                            )
+                    
+                    img = Image.fromarray(img).convert("RGB")
+                    img = img.resize((224, 224), Image.LANCZOS)
 
-                        torch.save(
-                            (img, y, candidate_text),
-                            (f"{tensor_dir}/images/{index}-{i}-{y}.pt"),
+                    # If all masks for this image were bad, then the image is bad
+                    if bad_masks_count == len(label_ids):
+                        self.bad_imgs+=1
+                        continue
+                    else:
+                        img.save(
+                            (f"{tensor_dir}/images/{index}-{i}-{y}.png"),
                         )
-
-                        try:
-                            path = f"{tensor_dir}/images/{index}-{i}-{y}.pt"
-                            test = torch.load(path, weights_only=False)
-                        except Exception as e:
-                            print(e)
-                            print(f"loading test failed! Tried to load {im_path}")
 
                 except Exception as e:
                     print(f"Error on file when resizing: {row.File}")
@@ -362,8 +389,6 @@ class MedGeeseDataModule(LightningDataModule):
             delayed(process)(row)
             for row in tqdm(mega.itertuples(index=False), total=len(mega))
         )
-        # print(throw_count)
-        # mega.progress_apply(process, axis=1)
 
     def setup(self, stage: str):
         """Load dataset for training/validation/testing.
@@ -380,7 +405,6 @@ class MedGeeseDataModule(LightningDataModule):
 
         # We only have access to trainer in setup, so we need to calculate
         # these parameters here.
-        #print(self.trainer, self._train_device_batch_size, self.trainer.world_size)
         self._train_device_batch_size = self.hparams.train_batch_size // self.trainer.world_size
         self._test_device_batch_size = self.hparams.test_batch_size // self.trainer.world_size
 
@@ -402,42 +426,24 @@ class MedGeeseDataModule(LightningDataModule):
             self._train_device_batch_size = (
                 self.hparams.train_batch_size // self.trainer.world_size
             )
-            print("train device batch size", self._train_device_batch_size, self.trainer.world_size)
             self._test_device_batch_size = (
                 self.hparams.test_batch_size // self.trainer.world_size
             )
 
         tensor_dir = self.hparams.tensor_dir  # type: ignore
-        if self.hparams.crop == True:
-            examples = list(glob(tensor_dir + "/masks/*.pt"))
-        else:
-            examples = list(glob(tensor_dir + "/images/*.pt"))
+        examples = sorted(list(glob(tensor_dir + "/masks/*.png")))
         random.seed(42)
+
+        # Get classes of all examples for dataset balancing
         all_check = []
         for i in examples:
             count = int(os.path.basename(i).split("-")[-1].split(".")[0])
             all_check.append(count)
 
-        # Some classes are drastically overrepresented in the dataset.
-        # In this case, some instances must be removed in order to ensure that
-        # the testing and validation sets do not become too biased
-        #removed_points = []
-        #for i in set(all_check):
-        #    if all_check.count(i) > 100000:
-        #        print(i, all_check.count(i))
-        #        reduced_sets = random.sample(
-        #            [point for point in examples if int(os.path.basename(point).split("-")[-1].split(".")[0]) == i],
-        #            int(all_check.count(i)/2)
-        #        )
-        #        removed_points.extend(reduced_sets)
-        #print("number of datapoints to remove", len(removed_points))
-        #examples = set(examples) - set(removed_points)
-        #examples = list(examples)
-
         # This is similar to MedSAM's data processing approach, where they randomly select
         # one bounding box from the set of possible bounding boxes for a single datapoint.
         # The actual dataset size is only the amount of distinct images in the dataset
-        new_dataset_size = int(len(list(glob(tensor_dir + "/images/*.pt"))))
+        new_dataset_size = int(len(list(glob(tensor_dir + "/images/*.png"))))
 
         # Group datapoints by case to ensure no data leakage happens
         by_case = [
@@ -451,6 +457,7 @@ class MedGeeseDataModule(LightningDataModule):
             count = os.path.basename(i[0]).split("-")[-1].split(".")[0]
             all.append(int(count))
 
+        # Perform train/val/test splitting
         train, val, test = self.hparams.train_val_test_split  # type: ignore
         train_set, val_test_set, train_y, val_test_y = train_test_split(
             by_case,
@@ -464,7 +471,19 @@ class MedGeeseDataModule(LightningDataModule):
             val_test_set,
             val_test_y,
             test_size=test / (val + test),
+            random_state=3,
         )
+
+        # A utility function to convert a mask path to the corresponding
+        # image path. This is used when we are not cropping to the bounding
+        # box of the visual mention, and instead want to use the full image.
+        def masksToImages(path):
+            split_basename = os.path.basename(path).split("-")
+            stem = f"{split_basename[0]}-{split_basename[1]}-{split_basename[-1]}"
+            tensor_dir = os.path.dirname(os.path.dirname(path))
+            img_path = tensor_dir + f"/images/{stem}"
+            return img_path
+
         # Flatten cases into final lists. The size ratios will likely not be exact
         # to the desired ratios, but the goal is to get a relatively even amount
         # through random splitting.
@@ -472,6 +491,15 @@ class MedGeeseDataModule(LightningDataModule):
         final_test_set = [slice for case in test_set for slice in case]
         final_val_set = [slice for case in val_set for slice in case]
 
+        # If we are not cropping to the bounding box of the visual mention,
+        # convert all mask paths to image paths.
+        if not self.hparams.crop:
+            final_train_set = list(set([masksToImages(slice) for slice in final_train_set]))
+            final_test_set = list(set([masksToImages(slice) for slice in final_test_set]))
+            final_val_set = list(set([masksToImages(slice) for slice in final_val_set]))
+
+
+        # Print out the number of classes in each split for sanity checking
         train_classes = [
             int(os.path.basename(i).split("-")[-1].split(".")[0])
             for i in final_train_set
@@ -484,6 +512,8 @@ class MedGeeseDataModule(LightningDataModule):
             print(i, train_classes.count(i))
             print(i, test_classes.count(i))
 
+        # Create a weighted random sampler to assist with balancing the dataset
+        # during training.
         c = []
         for i in final_train_set:
             count = os.path.basename(i).split("-")[-1].split(".")[0]
@@ -497,29 +527,33 @@ class MedGeeseDataModule(LightningDataModule):
             sample_weights[i] = weights[c[i]]
 
         flat_val_test_set = [slice for case in val_test_set for slice in case]
-        print(new_dataset_size)
         distinct_val_test_images = [
             list(i)
             for j, i in groupby(
                 flat_val_test_set, lambda x: os.path.basename(x).split("-")[0:2]
             )
         ]
-        print(len(distinct_val_test_images))
         new_dataset_size = (
             new_dataset_size - len(distinct_val_test_images)
         )
-        #new_dataset_size = len(examples)
-        print(new_dataset_size)
 
         self.sampler = WeightedRandomSampler(
             sample_weights, replacement=True, num_samples=new_dataset_size
-        )  # len(sample_weights))
-        self.distributed_sampler = DistributedSamplerWrapper(
-            self.sampler, num_replicas=self.trainer.world_size, shuffle=False
         )
+
+        # The WeightedRandomSampler does not support distributed training
+        # out of the box, so we need to wrap it in a DistributedSamplerWrapper
+        # to ensure each GPU gets a different subset of the data.
+        if self.trainer.world_size > 1:
+            self.distributed_sampler = DistributedSamplerWrapper(
+                self.sampler, num_replicas=self.trainer.world_size, shuffle=False
+            )
+        else:
+            self.distributed_sampler = self.sampler
+
         if self._train_dataset is None:
             # make training dataset
-            self._train_dataset = MedGeeseDataset(
+            self._train_dataset = VELCRODataset(
                 items=final_train_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=False,
@@ -527,7 +561,7 @@ class MedGeeseDataModule(LightningDataModule):
             )
         if self._val_dataset is None:
             # make validation dataset
-            self._val_dataset = MedGeeseDataset(
+            self._val_dataset = VELCRODataset(
                 items=final_val_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=False,
@@ -535,7 +569,7 @@ class MedGeeseDataModule(LightningDataModule):
             )
         if self._test_dataset is None:
             # Make test dataset
-            self._test_dataset = MedGeeseDataset(
+            self._test_dataset = VELCRODataset(
                 items=final_test_set,
                 model_path=self.hparams.image_model_path,  # type: ignore
                 is_testing=True,
@@ -544,7 +578,9 @@ class MedGeeseDataModule(LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:
         """
-        Return the training dataloader.
+        Return the training dataloader. Only this
+        dataloader is given a weighted sampler. Shuffling must be
+        false when using the weighted random sampler.
         """
         assert self._train_dataset is not None
         return DataLoader(
@@ -560,7 +596,9 @@ class MedGeeseDataModule(LightningDataModule):
         Return the validation dataloader.
         """
         assert self._val_dataset is not None
-        sampler = DistributedSampler(self._val_dataset)
+        sampler = None
+        if self.trainer.world_size > 1:
+            sampler = DistributedSampler(self._val_dataset)
         return DataLoader(
             self._val_dataset,
             batch_size=self._test_device_batch_size,  # type: ignore
@@ -574,7 +612,9 @@ class MedGeeseDataModule(LightningDataModule):
         Return the test dataloader.
         """
         assert self._test_dataset is not None
-        sampler = DistributedSampler(self._test_dataset)
+        sampler = None
+        if self.trainer.world_size > 1:
+            sampler = DistributedSampler(self._test_dataset)
         return DataLoader(
             self._test_dataset,
             batch_size=self._test_device_batch_size,  # type: ignore
@@ -584,13 +624,15 @@ class MedGeeseDataModule(LightningDataModule):
         )
 
 
-class MedGeeseDataset(Dataset):
+class VELCRODataset(Dataset):
     """Dataset instance for a dataloader.
 
     Params:
         items (list[str]): A list of paths to the processed tensors.
-        image_model_name (str): The huggingface name of the image tokenizer to
-        use.
+        model_path (str): The huggingface path of the image tokenizer to use.
+        is_testing (bool): Whether the dataset is being used for testing.
+        from_mem (bool): Whether to load all data into memory. This can
+            speed up training, but requires more memory.
     """
 
     def __init__(self, items: list[str], model_path: str, is_testing: bool, from_mem: bool):
@@ -598,18 +640,18 @@ class MedGeeseDataset(Dataset):
         self.items = items
         self.from_mem = from_mem
         if from_mem:
-            print("loading...")
-            self.examples = {idx: torch.load(path, weights_only=False) for idx, path in enumerate(items)}
-            print("done loading!")
+            self.examples = {idx: torch.load(path, weights_only=False) 
+                             for idx, path in enumerate(items)}
         self.is_testing = is_testing
+        # These transforms will always work with non-empty masks
         self.safe_transforms = v2.Compose(
             [
-                #v2.PILToTensor(),
-                # v2.ToDtype(torch.float16),
                 v2.RandomHorizontalFlip(p=0.5),
                 v2.RandomVerticalFlip(p=0.5),
             ]
         )
+        # These transforms may result in empty masks, so we need to
+        # try them and revert if the mask is empty
         self.danger_transforms = v2.Compose([v2.RandomRotation(90)])
 
         self.processor = AutoImageProcessor.from_pretrained(
@@ -629,8 +671,12 @@ class MedGeeseDataset(Dataset):
         if self.from_mem:
             (img, label, candidate_text) = self.examples[idx]
         else:
-            (img, label, candidate_text) = torch.load(
-                self.items[idx], weights_only=False
+            img = Image.open(self.items[idx])
+            img = PILToTensor()(img)
+            tensor_dir = os.path.dirname(os.path.dirname(self.items[idx]))
+            (label, candidate_text, _) = torch.load(
+                tensor_dir + f"/annotations/{os.path.splitext(
+                    os.path.basename(self.items[idx]))[0]}.pt", weights_only=False
             )
         assert isinstance(img, torch.Tensor), f"{type(img)=}"
         #assert isinstance(mask, torch.Tensor), f"{type(mask)=}"
@@ -638,11 +684,9 @@ class MedGeeseDataset(Dataset):
         assert isinstance(candidate_text, dict), f"{type(candidate_text)=}"
         assert all(isinstance(x, torch.Tensor) for x in candidate_text.values())
 
-        #mask = tv.Mask(mask)
         img = tv.Image(img)
-        #if torch.max(mask) == 0:
-        #    raise Exception("Empty mask pre")
 
+        # Perform random transforms only during training
         if not self.is_testing:
             img = self.safe_transforms(img)
             try_img = self.danger_transforms(img)
@@ -666,7 +710,7 @@ class MedGeeseDataset(Dataset):
                 "candidate_input": candidate_text,
                 "image_input": {"img": img.pixel_values},
             },
-            "y": {"class_indices": label},
+            "y": {"class_indices": label, "path": self.items[idx]},
         }
 
     def __len__(self):

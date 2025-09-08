@@ -162,3 +162,11 @@ cython_debug/
 #.idea/
 
 *.out
+*.sh
+*.npz
+*.csv
+*.pth
+*.ckpt
+*.swp
+*.png
+*.txt
