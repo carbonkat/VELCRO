@@ -1,0 +1,88 @@
+{
+    "NeurIPS22CellSeg":
+        ["cell"]
+    ,
+    "IDRiD":
+        ["optic disk"]
+    ,
+    "PAPILA":
+        ["optic disk", "optic cup"]
+    ,
+    "CDD-CESM":
+        ["mass in breast"]
+    ,
+    "Breast-Ultrasound":
+        ["mass in breast"]
+    ,
+    "hc18":
+        ["fetal head circumference"]
+    ,
+    "Chest-Xray-Masks-and-Labels":
+        ["lung"]
+    ,
+    "COVID-19-Radiography-Database":
+        ["lung", "pneumonia", "covid-19 virus disease"]
+    ,
+    "COVID-QU-Ex-lungMask_Lung":
+        ["lung"]
+    ,
+    "COVID-QU-Ex-lungMask_CovidInfection":
+        ["pneumonia", "covid-19 virus disease"]
+    ,
+    "Pneumothorax-Masks":
+        ["pneumothorax"]
+    ,
+    "CervicalCancer":
+        ["cervical cancer"]
+    ,
+    "Heart":
+        ["left atrial structure"]
+    ,
+    "ISLES2022_ADC":
+        ["brain infarction"]
+    ,
+    "ISLES2022_DWI":
+        ["brain infarction"]
+    ,
+    "ProstateADC":
+        ["prostate"]
+    ,
+    "ProstateT2":
+        ["prostate"]
+    ,
+    "QIN-PROSTATE-Lesion":
+        ["malignant neoplasm of prostate"]
+    ,
+    "QIN-PROSTATE-Prostate":
+        ["prostate"]
+    ,
+    "WMH_FLAIR":
+        ["hyperintensity of cerebral white matter on MRI"]
+    ,
+    "WMH_T1":
+        ["hyperintensity of cerebral white matter on MRI"]
+    ,
+    "Intraretinal-Cystoid-Fluid":
+        ["cystoid macular edema"]
+    ,
+    "autoPET":
+        ["melanoma"]
+    ,
+    "BraTS_FLAIR":
+        ["glioma"]
+    ,
+    "BraTS_T1":
+        ["glioma"]
+    ,
+    "BraTS_T1CE":
+        ["glioma"]
+    ,
+    "LIDC-IDRI":
+        ["nodule of lung"]
+    ,
+    "LungMasks":
+        ["lung"]
+    ,
+    "LungLesions":
+        ["lesion of lung"]
+}

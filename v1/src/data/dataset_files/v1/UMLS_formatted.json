@@ -1,0 +1,102 @@
+{
+    "cell": {
+        "idx": 0,
+        "desc": "[TITLE]cell[BODY]The fundamental, structural, and functional units or subunits of living organisms. They are composed of CYTOPLASM containing various ORGANELLES and a CELL MEMBRANE boundary."
+    },
+
+    "optic disk": {
+        "idx": 1,
+        "desc": "[TITLE]optic disk[BODY]The portion of the optic nerve seen in the fundus with the ophthalmoscope. It is formed by the meeting of all the retinal ganglion cell axons as they enter the optic nerve."
+    },
+
+    "optic cup": {
+        "idx": 2,
+        "desc": "[TITLE]optic cup[BODY]A double walled invagination of the optical vesicles in the early embryo, which forms the neural retina from its inner wall, the retinal pigment epithelium from its outer wall, and the ciliary body and iris from its rim."
+    },
+
+    "fetal head circumference": {
+        "idx": 3,
+        "desc": "[TITLE]fetal head circumference[BODY]A circumferential measurement of the fetal head at the widest point."
+    },
+
+    "lung": {
+        "idx": 4,
+        "desc": "[TITLE]lung[BODY]Either of the pair of organs occupying the cavity of the thorax that effect the aeration of the blood."
+    },
+
+    "covid-19 virus disease": {
+        "idx": 5,
+        "desc": "[TITLE]covid-19 virus disease[BODY]A viral disorder generally characterized by high FEVER; COUGH; DYSPNEA; CHILLS; PERSISTENT TREMOR; MUSCLE PAIN; HEADACHE; SORE THROAT; a new loss of taste and/or smell (see AGEUSIA and ANOSMIA) and other symptoms of a VIRAL PNEUMONIA. A coronavirus, SARS-CoV-2 VIRUS, in the genus BETACORONAVIRUS is the causative agent."
+    },
+
+    "pneumothorax": {
+        "idx": 6,
+        "desc": "[TITLE]pneumothorax[BODY]An accumulation of air or gas in the PLEURAL CAVITY, which may occur spontaneously or as a result of trauma or a pathological process. The gas may also be introduced deliberately during PNEUMOTHORAX, ARTIFICIAL."
+    },
+
+    "cervical cancer": {
+        "idx": 7,
+        "desc": "[TITLE]cervical cancer[BODY]A tumor of the uterine cervix."
+    },
+
+    "left atrial structure": {
+        "idx": 8,
+        "desc": "[TITLE]left atrial structure[BODY]One of four chambers of the heart, which receives blood from the pulmonary veins and pumps blood through the mitral valve into the left ventricle."
+    },
+
+    "prostate": {
+        "idx": 9,
+        "desc": "[TITLE]prostate[BODY]A gland in males that surrounds the neck of the URINARY BLADDER and the URETHRA. It secretes a substance that liquefies coagulated semen. It is situated in the pelvic cavity behind the lower part of the PUBIC SYMPHYSIS, above the deep layer of the triangular ligament, and rests upon the RECTUM."
+    },
+
+    "malignant neoplasm of prostate": {
+        "idx": 10,
+        "desc": "[TITLE]malignant neoplasm of prostate[BODY]A primary or metastatic malignant tumor involving the prostate gland. The vast majority are carcinomas."
+    },
+
+    "brain infarction": {
+        "idx": 11,
+        "desc": "[TITLE]brain infarction[BODY]Tissue NECROSIS in any area of the brain, including the CEREBRAL HEMISPHERES, the CEREBELLUM, and the BRAIN STEM. Brain infarction is the result of a cascade of events initiated by inadequate blood flow through the brain that is followed by HYPOXIA and HYPOGLYCEMIA in brain tissue. Damage may be temporary, permanent, selective or pan-necrosis."
+    },
+
+    "hyperintensity of cerebral white matter on MRI": {
+        "idx": 12,
+        "desc": "[TITLE]hyperintensity of cerebral white matter on MRI[BODY]A brighter than expected signal on magnetic resonance imaging emanating from the cerebral white matter."
+    },
+
+    "cystoid macular edema": {
+        "idx": 13,
+        "desc": "[TITLE]cystoid macular edema[BODY]Fluid accumulation in the outer layer of the MACULA LUTEA at the center of the RETINA in a petaloid pattern where cystic spaces are formed and may lead to macular depressions or holes."
+    },
+
+    "lesion of lung": {
+        "idx": 14,
+        "desc": "[TITLE]lesion of lung[BODY]A localized pathological or traumatic structural change, damage, deformity, or discontinuity of the lung."
+    },
+
+    "melanoma": {
+        "idx": 15,
+        "desc": "[TITLE]melanoma[BODY]A malignant neoplasm derived from cells that are capable of forming melanin, which may occur in the skin of any part of the body, in the eye, or, rarely, in the mucous membranes of the genitalia, anus, oral cavity, or other sites. It occurs mostly in adults and may originate de novo or from a pigmented nevus or malignant lentigo. Melanomas frequently metastasize widely, and the regional lymph nodes, liver, lungs, and brain are likely to be involved. The incidence of malignant skin melanomas is rising rapidly in all parts of the world."
+    },
+
+    "pneumonia": {
+        "idx": 16,
+        "desc": "[TITLE]pneumonia[BODY]Infection of the lung often accompanied by inflammation."
+    },
+
+    "mass in breast": {
+        "idx": 17,
+        "desc": "[TITLE]Mass in breast[BODY]A mass in the mammary gland, either mobile or immobile. Once the mass has reached the size of a small garden pea, it can be detected by palpation. With mammography a larger number of early breast cancers are being detected since this techniques allows detection prior to the point at which the mass can be felt. Breast masses are not always malignant. Benign fibrocystic breast disease is not uncommon. A fine needle biopsy aspiration can distinguish a cystic mass from a solid one. "
+    },
+
+    "glioma": {
+        "idx": 18,
+        "desc": "[TITLE]glioma[BODY]Benign and malignant central nervous system neoplasms derived from glial cells (i.e., astrocytes, oligodendrocytes, and ependymocytes). Astrocytes may give rise to astrocytomas (ASTROCYTOMA) or glioblastoma multiforme (see GLIOBLASTOMA). Oligodendrocytes give rise to oligodendrogliomas (OLIGODENDROGLIOMA) and ependymocytes may undergo transformation to become EPENDYMOMA; CHOROID PLEXUS NEOPLASMS; or colloid cysts of the third ventricle."
+    },
+
+    "nodule of lung": {
+        "idx": 19,
+        "desc": "[TITLE]nodule of lung[BODY]A benign or malignant small, oval or round growth in the lung. It can be due to infectious, inflammatory or neoplastic processes."
+    }
+
+}
